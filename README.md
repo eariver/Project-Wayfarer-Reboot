@@ -1,0 +1,2 @@
+# Project-Wayfarer-Reboot
+既存環境を再利用しつつ、AIエージェント主導でPlayable Alphaを構築するための独立リポジトリ
