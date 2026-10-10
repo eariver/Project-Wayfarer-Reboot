@@ -1,0 +1,5 @@
+# WaymarkProvider — PoC substitute for the Redis-backed RedisEconomy provider.
+# See docs/DECISIONS.md (D-2026-10-11-03).
+server-id: poc
+storage:
+  file: waymark.db

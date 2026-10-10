@@ -1,0 +1,4 @@
+# Worlds where breaking blocks counts toward Growth Pickaxe progress.
+worlds:
+  progress-allowlist:
+    - world
