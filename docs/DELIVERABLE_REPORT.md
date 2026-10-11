@@ -166,10 +166,21 @@ warnings under MC 26.2 renames). Ruined Frontier family at HARD.
 
 **LuckPerms 5.5.60** on all five servers (local file storage per server — see limitations).
 
-**MariaDB**: a second mariadbd instance cannot run in this sandbox (AppArmor restricts mariadbd to
-the system datadir), and the system instance has no credentials for me. Requested from the Owner:
-`CREATE DATABASE wayfarer_luckperms; CREATE DATABASE wayfarer_mcmmo;` plus a user with grants — with
-that, LuckPerms/mcMMO shared storage (production parity) can be switched on by config only.
+**MariaDB shared storage is live (production parity).**
+Owner created `wayfarer_luckperms` / `wayfarer_mcmmo` + a least-privilege user on the system
+MariaDB (credentials kept out-of-band in a gitignored runtime properties file; the repository
+carries only the sanitized template `docs/deploy/mariadb-setup.sql`).
+- LuckPerms 5.5.60 on all 5 servers now uses `storage-method: mysql` + `messaging-service: sql`
+  (backends + Velocity); a group created on Main (`wayfarer_test`) is immediately visible in
+  `wayfarer_luckperms.luckperms_groups` and on the other servers; cross-server ping/message
+  sync observed in logs.
+- mcMMO 2.0.0 on Main/Frontier uses the shared `wayfarer_mcmmo` with the production `mcmmo_`
+  table prefix. Verified: `/mmoedit wf_admin mining 500` on Main → `Mining: 500 XP` read by
+  **inspect on Frontier** from the shared database — the designed shared progression works.
+- **Port collision found and fixed**: ResourcePackManager's self-host HTTP port auto-derives
+  `MC port + 1`, i.e. Main (25579) grabbed **25580 — the Frontier game port** — which crashed
+  Frontier on restart. Main's ResourcePackManager now uses `selfHostPort: 25591`
+  (`networkHttpOffset-v2: 2`). Production must size this per backend (each backend +2).
 
 **HeadlessMC** (Owner's request): the official MC 1.21.4 and 26.2 clients **boot headless**
 (`-lwjgl` patch, offline account, offline proxy at 25588). The client reaches the title screen but
