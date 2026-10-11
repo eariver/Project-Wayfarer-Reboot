@@ -1,4 +1,6 @@
 # Worlds where breaking blocks counts toward Growth Pickaxe progress.
+# Paper 26.2 names the default world minecraft:overworld; older versions use world.
 worlds:
   progress-allowlist:
+    - minecraft:overworld
     - world

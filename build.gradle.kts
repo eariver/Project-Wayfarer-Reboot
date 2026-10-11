@@ -15,6 +15,8 @@ allprojects {
         mavenCentral()
         maven("https://repo.papermc.io/repository/maven-public/") // paper-api
         maven("https://jitpack.io")                               // VaultAPI
+        maven("https://repo.opencollab.dev/maven-releases/")       // MCProtocolLib
+        maven("https://repo.opencollab.dev/maven-snapshots/")       // MCProtocolLib 26.2 snapshot
     }
 }
 

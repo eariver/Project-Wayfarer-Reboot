@@ -27,12 +27,44 @@ public final class GrowthCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (args.length == 0 || args[0].equalsIgnoreCase("gui") || args[0].equalsIgnoreCase("status")) {
+        if (args.length == 0 || args[0].equalsIgnoreCase("gui")) {
             if (!(sender instanceof Player player)) {
                 sender.sendMessage(Text.mm("<red>Players only."));
                 return true;
             }
             plugin.growthGui().open(player);
+            return true;
+        }
+        if (args[0].equalsIgnoreCase("status")) {
+            Player player = args.length >= 2 ? Bukkit.getPlayerExact(args[1])
+                    : sender instanceof Player p ? p : null;
+            if (player == null) {
+                sender.sendMessage(Text.mm("<red>Players only (or specify an online player)."));
+                return true;
+            }
+            GrowthTool tool = plugin.repository().findActive(player.getUniqueId()).orElse(null);
+            if (tool == null) {
+                sender.sendMessage(Text.mm("<red>No Growth Pickaxe for <name>.", "name", player.getName()));
+                return true;
+            }
+            int tier = plugin.tierFor(tool.progress());
+            long next = plugin.plan().thresholdFor(tier + 1);
+            sender.sendMessage(Text.mm("<gold>Growth Pickaxe <name></gold>: tier=<tier> progress=<progress>/<next> branch=<branch> status=<status> epoch=<epoch>",
+                    "name", tool.ownerName(), "tier", GrowthItems.tierName(tier),
+                    "progress", String.valueOf(tool.progress()), "next", String.valueOf(next),
+                    "branch", tool.branch().name(), "status", tool.status().name(), "epoch", String.valueOf(tool.epoch())));
+            return true;
+        }
+        if (args[0].equalsIgnoreCase("debug-on")) {
+            if (!sender.hasPermission("wayfarer.main.admin")) return true;
+            io.github.eariver.wayfarer.main.WayfarerMainPlugin.setDebug(true);
+            sender.sendMessage(Text.mm("<green>Growth debug logging on."));
+            return true;
+        }
+        if (args[0].equalsIgnoreCase("debug-off")) {
+            if (!sender.hasPermission("wayfarer.main.admin")) return true;
+            io.github.eariver.wayfarer.main.WayfarerMainPlugin.setDebug(false);
+            sender.sendMessage(Text.mm("<green>Growth debug logging off."));
             return true;
         }
         String sub = args[0].toLowerCase();
@@ -137,9 +169,12 @@ public final class GrowthCommand implements CommandExecutor {
             return true;
         }
         EvolutionPlan.Branch branch;
-        try {
-            branch = EvolutionPlan.Branch.valueOf(args[1].toUpperCase());
-        } catch (IllegalArgumentException e) {
+        String arg = args[1].toLowerCase();
+        if (arg.equals("silk") || arg.equals("silktouch") || arg.equals("silk_touch")) {
+            branch = EvolutionPlan.Branch.SILK_TOUCH;
+        } else if (arg.equals("fortune")) {
+            branch = EvolutionPlan.Branch.FORTUNE;
+        } else {
             sender.sendMessage(Text.mm("<red>Unknown branch. Use fortune or silk."));
             return true;
         }

@@ -81,7 +81,8 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
     public Result deposit(UUID target, long amount, String kind, String reference) {
         if (amount <= 0) return Result.error("amount must be positive");
         return store.tx(c -> {
-            upsertBalance(c, target, amount);
+            ensureRow(c, target);
+            addBalance(c, target, amount);
             ledger(c, kind, null, target, amount, reference);
             return Result.ok(balance(target));
         });
@@ -98,13 +99,7 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
                     }
                 }
             }
-            try (PreparedStatement up = c.prepareStatement(
-                    "UPDATE wm_balance SET balance=balance-?, updated_at=? WHERE holder=?")) {
-                up.setLong(1, amount);
-                up.setLong(2, now());
-                up.setString(3, target.toString());
-                up.executeUpdate();
-            }
+            addBalance(c, target, -amount);
             ledger(c, kind, actor, target, -amount, reference);
             return Result.ok(balance(target));
         });
@@ -112,7 +107,7 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
 
     public boolean setBalance(UUID target, long amount, String kind) {
         return store.tx(c -> {
-            upsertBalance(c, target, 0);
+            ensureRow(c, target);
             try (PreparedStatement ps = c.prepareStatement(
                     "UPDATE wm_balance SET balance=?, updated_at=? WHERE holder=?")) {
                 ps.setLong(1, amount);
@@ -125,15 +120,21 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
         });
     }
 
-    private void upsertBalance(Connection c, UUID target, long delta) throws SQLException {
+    private void ensureRow(Connection c, UUID target) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO wm_balance(holder, balance, updated_at) VALUES(?,?,?) " +
-                        "ON CONFLICT(holder) DO UPDATE SET balance=balance+?, updated_at=?")) {
+                "MERGE INTO wm_balance (holder, balance, updated_at) KEY(holder) VALUES(?, 0, ?)")) {
             ps.setString(1, target.toString());
-            ps.setLong(2, delta);
-            ps.setLong(3, now());
-            ps.setLong(4, delta);
-            ps.setLong(5, now());
+            ps.setLong(2, now());
+            ps.executeUpdate();
+        }
+    }
+
+    private void addBalance(Connection c, UUID target, long delta) throws SQLException {
+        try (PreparedStatement ps = c.prepareStatement(
+                "UPDATE wm_balance SET balance=balance+?, updated_at=? WHERE holder=?")) {
+            ps.setLong(1, delta);
+            ps.setLong(2, now());
+            ps.setString(3, target.toString());
             ps.executeUpdate();
         }
     }

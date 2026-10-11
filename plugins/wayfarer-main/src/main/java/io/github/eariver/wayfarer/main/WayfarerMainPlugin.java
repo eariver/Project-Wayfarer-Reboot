@@ -37,6 +37,8 @@ import java.util.logging.Level;
  */
 public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
 
+    private static volatile boolean debug = false;
+
     private EvolutionPlan plan;
     private RepairPricing pricing;
     private GrowthRepository repository;
@@ -97,6 +99,10 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         return shopGui;
     }
 
+    public static void setDebug(boolean value) {
+        debug = value;
+    }
+
     public NamespacedKey key(String name) {
         return new NamespacedKey(this, name);
     }
@@ -141,6 +147,10 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
 
         int before = tierFor(tool.progress());
         GrowthTool updated = tool.withProgress(tool.progress() + 1);
+        if (debug) {
+            getLogger().info("[growth-debug] " + player.getName() + " break world=" + player.getWorld().getName()
+                    + " progress=" + updated.progress() + " allowed=" + progressWorlds.contains(player.getWorld().getName()));
+        }
         repository.update(updated);
         int after = tierFor(updated.progress());
         if (after > before) {
