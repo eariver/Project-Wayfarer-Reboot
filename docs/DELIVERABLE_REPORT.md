@@ -120,11 +120,36 @@ Test accounts used: `wf_admin` (op, offline UUID in ops.json) and `wayfarer_test
 
 ---
 
-## 5. Owner-pending artifacts / known limitations
+## 5. Owner-provided artifacts (received 2026-10-11, sha256 verified against plugin-manifest.yml)
 
-1. **EconomyShopGUI 7.1.1** — need the free-edition jar (SpigotMC account). `/shop` in Wayfarer_Main is the substitute (fixed prices, Vault).
-2. **BetterStructures content packs** (nightbreak.io): the plugin loads but no structure packs are present; Ruined Frontier currently spawns vanilla structures + EliteMobs elites instead of the BetterStructures ruins.
-3. **EliteMobs premium content** (dungeons/arenas/quests packages) not installed — free tier only.
+Placed in `~/wayfarer-dev/plugins` by the Owner. Every jar whose hash is recorded in
+`versions.yml` matched: EconomyShopGUI `db22cdc6…`, RedisEconomy `ab00270c…`,
+BetterStructures `aa63fef7…`, EvenMoreFish `0f131fe8…`, FreeMinecraftModels `3369c5ef…`,
+Iris 3.9.2 `46e3cd36…`, LeafGrapple `ffe4b330`, LuckPerms 5.5.60, PlaceholderAPI `fde03259…`,
+ResourcePackManager `240809e8…`, TAB `14fe9601…`, TAB-Bridge `0e5a8eab…`,
+VelocityScoreboardAPI `dbf3fb5b…`, VaultUnlocked `bd9e7a31…`, mcMMO `03abeeb4…`,
+Multiverse-Core/NetherPortals, WorldEdit, WorldGuard.
+
+| Artifact | Integration result |
+|---|---|
+| **EconomyShopGUI 7.1.1** | **Installed on Main and verified**: `Successfully hooked into Vault and using WaymarkProvider as economy provider` — the production shop consumes the shared Waymark ledger; `/shop` is now served by EconomyShopGUI (Wayfarer_Main yields the command when the plugin is present). |
+| **Iris 3.9.2 official jar** | Replaced the local source build (byte-identical size 3,619,963 and the recorded sha256 `46E3CD36…`), loads on Paper 1.21.11. |
+| **BetterStructures + 5 content packs** (103 default, exploration, caves-free, echoes, adventure) + BetterStructures Prop Pack | Installed on Main and the Ruined Frontier family. `BetterStructures fully initialized!` Live structure spawning in fresh chunks **not yet observed** (no teleport to unexplored terrain inside this session). |
+| **EliteMobs.jar (10.7.3)** | Replaced the Modrinth build on Frontier; loads with MagmaCore. |
+| **RedisEconomy 4.5.12-wayfarer.1** | Placed on Main; **cannot run locally**: no Redis server in the sandbox — it disables gracefully (`Disabling: redis server unreachable!`) and WaymarkProvider keeps serving the economy. Production verification remains for the Owner's Redis environment. |
+| **BetterHealthBar 4.1.0** | Installed on Frontier, enabled (`Plugin enabled.`). |
+| **CoreProtect-CE 24.0** | Installed on Main/Lobby but **does not start on MC 26.2** (`Minecraft 26.2 is not supported`) — matches the production deferral note; the jar stays for a later compatible release. |
+| **LuckPerms 5.5.60 (Bukkit + Velocity)** | Deployed on all five servers (backends use local file storage — no shared MariaDB in the sandbox, so permissions are per-server here). |
+| **advanced-portals 2.8.0 (spigot)** | **Not deployed**: the cross-server portal design needs the Velocity proxy component, which was not included in this drop. |
+
+## 6. Remaining known limitations
+
+1. **Interactive waystone/launchpad flows**: code complete and schema created, but the bot's `use-item-on` packets do not reach the 1.21.11 Frontier backend through ViaVersion; verify with an official client or a targeted harness.
+2. BetterStructures structure spawning in fresh chunks: not observed live yet (see §5).
+3. EconomyShopGUI live trade not executed (GUI click path unverified by the bot); Vault hook verified in logs.
+4. Multiverse-Inventories theme-group separation: config written, no live player-swap evidence yet.
+5. mcMMO shared progression remains per-server (no shared DB).
+6. Production Redis/MariaDB-backed services remain Owner-environment tasks.
 4. **Production shared storage** (MariaDB for mcMMO/LuckPerms; Redis for Waymark): the sandbox has neither. PoC uses H2 ledgers; mapping to production stacks is documented in DECISIONS.md (`D-2026-10-11-03`).
 5. **mcMMO shared progression is not cross-server in the PoC** (no shared DB); progression is per-server.
 6. **Bot interaction packets (use-item-on) do not reach the 1.21.11 Frontier backend** through ViaVersion — waystone/launchpad interactive flows need an official client or a targeted unit/headless harness.

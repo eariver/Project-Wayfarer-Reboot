@@ -37,3 +37,15 @@ SpigotMCのアカウント認証により無償版JARも取得不可（403）。
 
 Paper 26.2は単一コンテナ `world/` + `dimensions/minecraft/<key>` 方式。各サーバーのdefault world（level-name=world）をテーマ世界として直接使用し、追加ワールドはMultiverseで `world/dimensions/minecraft/<name>` に作成する。Void gate世界はbukkit.ymlの `worlds.world.generator: VoidGen` でdefault worldをVoid化する。MVのimport失敗でplugin全体がdisableされる事象（stale worlds.yml）は、worlds.yml削除→再スキャンで回避。
 **影響**: 本番の `servers/*/worlds/` 構成とはディレクトリ構造が異なる。本番導入手順書に構造差異を明記する。
+
+
+## D-2026-10-11-07: Owner-provided artifacts integrated (second delivery)
+
+Owner placed the production artifact set in `~/wayfarer-dev/plugins`; all hashes recorded in
+versions.yml matched. EconomyShopGUI 7.1.1 is now the Main shop and hooks the shared H2-backed
+WaymarkProvider (the same Vault service the production RedisEconomy provider would occupy);
+Wayfarer_Main registers `/shop` only when EconomyShopGUI is absent. Iris uses the official
+3.9.2 jar. RedisEconomy stays unconfigured locally (no Redis server available) and disables
+gracefully, so the PoC economy path is unchanged. CoreProtect cannot run on MC 26.2 (upstream
+limitation) and remains installed-but-disabled. AdvancedPortals was not deployed because the
+Velocity proxy component is required for its cross-server portals and was not included.
