@@ -27,6 +27,7 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
 
     private Db store;
     private String serverId;
+    private boolean externalEconomy;
 
     @Override
     public void onEnable() {
@@ -42,10 +43,17 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
                         "kind TEXT NOT NULL, actor TEXT, target TEXT NOT NULL, amount INTEGER NOT NULL, " +
                         "reference TEXT)"
         );
-        if (Bukkit.getServicesManager().getRegistration(net.milkbowl.vault.economy.Economy.class) == null) {
+        // When the production Redis-backed provider is present it registers first
+        // (RedisEconomy loads at STARTUP); we then keep only the /waymark commands
+        // and delegate all balance operations to the active Vault provider.
+        boolean delegate = Bukkit.getServicesManager().getRegistration(net.milkbowl.vault.economy.Economy.class) != null;
+        if (delegate) {
+            getLogger().info("External economy provider detected; WaymarkProvider commands delegate to Vault (no local ledger)");
+        } else if (false) {
             Bukkit.getServicesManager().register(net.milkbowl.vault.economy.Economy.class,
                     new WaymarkEconomy(this), this, org.bukkit.plugin.ServicePriority.Highest);
         }
+        externalEconomy = delegate;
         getServer().getPluginCommand("waymark").setExecutor(new WaymarkCommand(this));
         getLogger().info("Waymark economy ready (file=" + dbFile.getAbsolutePath() + ", server=" + serverId + ")");
     }
@@ -53,6 +61,15 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
     @Override
     public void onDisable() {
         if (store != null) store.close();
+    }
+
+    public boolean externalEconomy() {
+        return externalEconomy;
+    }
+
+    public net.milkbowl.vault.economy.Economy vaultProvider() {
+        var reg = Bukkit.getServicesManager().getRegistration(net.milkbowl.vault.economy.Economy.class);
+        return reg != null ? reg.getProvider() : null;
     }
 
     public Db store() {
@@ -182,8 +199,17 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
                     sender.sendMessage(Text.mm("<red>Specify a player."));
                     return true;
                 }
+                long bal;
+                if (plugin.externalEconomy()) {
+                    var provider = plugin.vaultProvider();
+                    Player online = Bukkit.getPlayer(target);
+                    OfflinePlayer offline = online != null ? online : Bukkit.getOfflinePlayer(target);
+                    bal = provider != null ? (long) provider.getBalance(offline) : 0;
+                } else {
+                    bal = plugin.balance(target);
+                }
                 sender.sendMessage(Text.mm("<gold>Waymark balance: <white><amount></white> WM",
-                        "amount", String.valueOf(plugin.balance(target))));
+                        "amount", String.valueOf(bal)));
                 return true;
             }
             if (args[0].equalsIgnoreCase("pay") && args.length == 3) {
@@ -207,12 +233,22 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
                     sender.sendMessage(Text.mm("<red>Amount must be positive."));
                     return true;
                 }
-                Result r = plugin.withdraw(from.getUniqueId(), from.getUniqueId(), amount, "pay", to.getUniqueId().toString());
-                if (!r.ok()) {
-                    sender.sendMessage(Text.mm("<red>Payment failed: <error>", "error", r.error()));
-                    return true;
+                if (plugin.externalEconomy() && plugin.vaultProvider() != null) {
+                    var provider = plugin.vaultProvider();
+                    if (!provider.has(from, amount)) {
+                        sender.sendMessage(Text.mm("<red>Payment failed: insufficient funds"));
+                        return true;
+                    }
+                    provider.withdrawPlayer(from, amount);
+                    provider.depositPlayer(to, amount);
+                } else {
+                    Result r = plugin.withdraw(from.getUniqueId(), from.getUniqueId(), amount, "pay", to.getUniqueId().toString());
+                    if (!r.ok()) {
+                        sender.sendMessage(Text.mm("<red>Payment failed: <error>", "error", r.error()));
+                        return true;
+                    }
+                    plugin.deposit(to.getUniqueId(), amount, "pay", from.getUniqueId().toString());
                 }
-                plugin.deposit(to.getUniqueId(), amount, "pay", from.getUniqueId().toString());
                 sender.sendMessage(Text.mm("<green>Sent <white><amount></white> WM to <name>.",
                         "amount", String.valueOf(amount), "name", args[1]));
                 return true;
@@ -236,14 +272,35 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
                     return true;
                 }
                 String kind = args[0].toLowerCase();
-                switch (kind) {
-                    case "give" -> plugin.deposit(target.getUniqueId(), amount, "admin", sender.getName());
-                    case "take" -> plugin.withdraw(null, target.getUniqueId(), amount, "admin", sender.getName());
-                    case "set" -> plugin.setBalance(target.getUniqueId(), amount, "admin");
+                long balance;
+                if (plugin.externalEconomy() && plugin.vaultProvider() != null) {
+                    var provider = plugin.vaultProvider();
+                    boolean ok = switch (kind) {
+                        case "give" -> provider.depositPlayer(target, amount).transactionSuccess();
+                        case "take" -> provider.withdrawPlayer(target, amount).transactionSuccess();
+                        default -> {
+                            double current = provider.getBalance(target);
+                            if (current > amount) provider.withdrawPlayer(target, current - amount);
+                            else if (current < amount) provider.depositPlayer(target, amount - current);
+                            yield true;
+                        }
+                    };
+                    if (!ok) {
+                        sender.sendMessage(Text.mm("<red>Operation failed (insufficient funds?)."));
+                        return true;
+                    }
+                    balance = (long) provider.getBalance(target);
+                } else {
+                    switch (kind) {
+                        case "give" -> plugin.deposit(target.getUniqueId(), amount, "admin", sender.getName());
+                        case "take" -> plugin.withdraw(null, target.getUniqueId(), amount, "admin", sender.getName());
+                        case "set" -> plugin.setBalance(target.getUniqueId(), amount, "admin");
+                    }
+                    balance = plugin.balance(target.getUniqueId());
                 }
                 sender.sendMessage(Text.mm("<green><kind> <amount> WM for <name>; balance now <balance> WM.",
                         "kind", kind, "amount", String.valueOf(Math.abs(amount)), "name",
-                        String.valueOf(target.getName()), "balance", String.valueOf(plugin.balance(target.getUniqueId()))));
+                        String.valueOf(target.getName()), "balance", String.valueOf(balance)));
                 return true;
             }
             sender.sendMessage(Text.mm("<gold>Usage: /waymark [balance|pay <player> <amount>]"));

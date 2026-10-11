@@ -63,6 +63,15 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         shopGui = new ShopGui(this);
         getServer().getPluginManager().registerEvents(this, this);
         getServer().getPluginCommand("wayfarer-main").setExecutor(new GrowthCommand(this));
+        boolean economyShop = getServer().getPluginManager().getPlugin("EconomyShopGUI") != null;
+        if (economyShop) {
+            // Production shop is installed: yield the /shop command to it.
+            try {
+                getServer().getCommandMap().getKnownCommands().remove("shop");
+            } catch (Exception ignored) {
+            }
+            getLogger().info("EconomyShopGUI detected; /shop handled by EconomyShopGUI");
+        }
         getLogger().info("Wayfarer_Main ready (growth pickaxe, worlds=" + progressWorlds + ")");
     }
 
