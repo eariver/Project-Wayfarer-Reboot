@@ -32,8 +32,11 @@ Verified runtime evidence (automated protocol client through the offline Velocit
   EliteMobs content imported (custom items loading). LuckPerms 5.5.60 on all servers.
   HeadlessMC: official 1.21.4/26.2 clients boot headless; auto-join blocked in HMC RC5 — Owner's
   official client remains the playtest vehicle.
-  MariaDB: a second instance cannot run (AppArmor) — Owner DB creation requested for shared
-  LuckPerms/mcMMO storage. CoreProtect-CE 24.0 cannot start on MC 26.2 (upstream).
+  **MariaDB shared storage LIVE**: LuckPerms (mysql + sql messaging on all 5 servers) and
+  mcMMO (wayfarer_mcmmo, mcmmo_ prefix) — cross-server verified (mining 500 XP set on Main,
+  read on Frontier via inspect; LP group created on Main visible network-wide).
+  ResourcePackManager port collision fixed (selfHostPort 25591 on Main; auto MC+1 collides with
+  Frontier's 25580). CoreProtect-CE 24.0 cannot start on MC 26.2 (upstream).
 
 Remaining verification work (documented as NOT verified):
 - Waystone/launchpad interactive flows (bot use-item-on packets don't reach the 1.21.11
