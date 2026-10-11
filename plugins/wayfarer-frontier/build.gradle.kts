@@ -7,7 +7,12 @@ dependencies {
     compileOnly("com.github.MilkBowl:VaultAPI:1.7") { exclude(group = "org.bukkit", module = "bukkit") }
     implementation(project(":libs:wayfarer-common"))
     implementation("com.h2database:h2:2.5.252")
-    compileOnly(files("libs/LeafGrapple.jar"))
+    // LeafGrapple is not committed to this repository (third-party jar). Drop the
+    // downloaded jar into plugins/wayfarer-frontier/libs/ to build the reflective hook adapter.
+    val leafGrapple = file("libs/LeafGrapple.jar")
+    if (leafGrapple.exists()) {
+        compileOnly(files(leafGrapple))
+    }
 }
 
 tasks {
