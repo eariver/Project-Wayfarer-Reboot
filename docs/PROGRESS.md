@@ -25,9 +25,15 @@ Verified runtime evidence (automated protocol client through the offline Velocit
 - Iris official 3.9.2 jar replaces the source build; EliteMobs.jar 10.7.3 + BetterHealthBar
   4.1.0 on Frontier; BetterStructures + 5 content packs on Main/Frontier (`fully initialized`);
   LuckPerms 5.5.60 on all five servers (local storage).
-- RedisEconomy 4.5.12-wayfarer.1 placed but cannot run without a local Redis (disables
-  gracefully). CoreProtect-CE 24.0 cannot start on MC 26.2 (upstream). AdvancedPortals not
-  deployed (Velocity component missing from the drop).
+- **Redis 7 + MariaDB installed by Owner.** RedisEconomy is now the live economy provider on both
+  servers (isolated Redis :6399, cluster waymark): cross-server shared Waymark verified
+  (2800 WM credited on Main, read on Frontier), EconomyShopGUI consumes it.
+  AdvancedPortals 2.8.0 deployed on proxy+backends (same binary; portal creation is in-game only).
+  EliteMobs content imported (custom items loading). LuckPerms 5.5.60 on all servers.
+  HeadlessMC: official 1.21.4/26.2 clients boot headless; auto-join blocked in HMC RC5 — Owner's
+  official client remains the playtest vehicle.
+  MariaDB: a second instance cannot run (AppArmor) — Owner DB creation requested for shared
+  LuckPerms/mcMMO storage. CoreProtect-CE 24.0 cannot start on MC 26.2 (upstream).
 
 Remaining verification work (documented as NOT verified):
 - Waystone/launchpad interactive flows (bot use-item-on packets don't reach the 1.21.11

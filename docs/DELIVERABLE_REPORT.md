@@ -142,7 +142,42 @@ Multiverse-Core/NetherPortals, WorldEdit, WorldGuard.
 | **LuckPerms 5.5.60 (Bukkit + Velocity)** | Deployed on all five servers (backends use local file storage — no shared MariaDB in the sandbox, so permissions are per-server here). |
 | **advanced-portals 2.8.0 (spigot)** | **Not deployed**: the cross-server portal design needs the Velocity proxy component, which was not included in this drop. |
 
-## 6. Remaining known limitations
+## 6. Third integration pass (2026-10-11, Redis/MariaDB/AdvancedPortals/EliteMobs content/HeadlessMC)
+
+**RedisEconomy (production currency) is now the live economy provider.**
+Isolated Redis 7 on `127.0.0.1:6399` (own datadir/AOF, `/home/eariver/wayfarer-dev/runtime/redis`),
+RedisEconomy 4.5.12-wayfarer.1 (Owner sha `ab00270c…`) on Main (clientName `main`) and Frontier
+(clientName `frontier`), both with `clusterId: waymark`. Observed:
+- `Successfully registered RedisEconomy default currency 'vault' as economy provider in Vault` on both servers.
+- Cross-server shared balance: credited on Main, `2800 WM` read from Frontier (and by the bot on Main).
+- EconomyShopGUI reports `Using WaymarkProvider as economy provider` — the shared ledger is consumed by the
+  production shop as well as our plugins (repair, waystones, launchpad/shop pricing).
+- `WaymarkProvider` (this repo) now detects the external provider and only runs `/waymark` commands
+  (balance/pay/give/take/set) against the active Vault provider; the H2 fallback remains when RedisEconomy is absent.
+
+**AdvancedPortals 2.8.0** deployed on Velocity and all three backends (the Owner confirmed the
+Velocity component is the same binary — it is: `Successfully enabled!` on the proxy). Portal
+creation itself is in-game-only (`command.create.console` = console cannot create portals), so the
+physical cross-server lobby/main/frontier portals remain an in-game task with the region selector.
+
+**EliteMobs content** (Primis adventure 269MB, Dungeoneering Modules Free, Free Elite Shrines,
+factory packs) imported into the Frontier EliteMobs data; custom items load (enchantment-entry
+warnings under MC 26.2 renames). Ruined Frontier family at HARD.
+
+**LuckPerms 5.5.60** on all five servers (local file storage per server — see limitations).
+
+**MariaDB**: a second mariadbd instance cannot run in this sandbox (AppArmor restricts mariadbd to
+the system datadir), and the system instance has no credentials for me. Requested from the Owner:
+`CREATE DATABASE wayfarer_luckperms; CREATE DATABASE wayfarer_mcmmo;` plus a user with grants — with
+that, LuckPerms/mcMMO shared storage (production parity) can be switched on by config only.
+
+**HeadlessMC** (Owner's request): the official MC 1.21.4 and 26.2 clients **boot headless**
+(`-lwjgl` patch, offline account, offline proxy at 25588). The client reaches the title screen but
+the `--quickPlayMultiplayer` auto-join does not fire in HMC 3.0.0-RC5 (no input path for the
+post-title consent). Client login/join remains to be exercised with the Owner's official client
+(already planned) or a future HMC version.
+
+## 7. Remaining known limitations
 
 1. **Interactive waystone/launchpad flows**: code complete and schema created, but the bot's `use-item-on` packets do not reach the 1.21.11 Frontier backend through ViaVersion; verify with an official client or a targeted harness.
 2. BetterStructures structure spawning in fresh chunks: not observed live yet (see §5).

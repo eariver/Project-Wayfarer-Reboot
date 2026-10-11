@@ -49,3 +49,12 @@ Wayfarer_Main registers `/shop` only when EconomyShopGUI is absent. Iris uses th
 gracefully, so the PoC economy path is unchanged. CoreProtect cannot run on MC 26.2 (upstream
 limitation) and remains installed-but-disabled. AdvancedPortals was not deployed because the
 Velocity proxy component is required for its cross-server portals and was not included.
+
+
+## D-2026-10-11-08: Production economy provider takes over (RedisEconomy)
+
+Owner installed Redis and provided RedisEconomy 4.5.12-wayfarer.1. An isolated Redis (6399) now
+runs in the sandbox; RedisEconomy on Main/Frontier (clusterId waymark) registers the Vault economy.
+WaymarkProvider was changed to detect an existing Vault provider and delegate `/waymark` commands to
+it instead of its own ledger (the H2 fallback only applies when no RedisEconomy is present). This
+gives production parity for the shared Waymark while keeping the PoC self-contained when Redis is absent.
