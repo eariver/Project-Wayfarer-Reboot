@@ -19,6 +19,16 @@ Verified runtime evidence (automated protocol client through the offline Velocit
 - All production plugin jars enabled on all backends; frontier_iris (Iris engine, custom
   biome source injected), frontier_bs (HARD) exist.
 
+**Second delivery (2026-10-11, Owner-provided artifacts, all sha256 verified):**
+- EconomyShopGUI 7.1.1 on Main, hooked to WaymarkProvider (`Successfully hooked into Vault and
+  using WaymarkProvider as economy provider`), owns `/shop`.
+- Iris official 3.9.2 jar replaces the source build; EliteMobs.jar 10.7.3 + BetterHealthBar
+  4.1.0 on Frontier; BetterStructures + 5 content packs on Main/Frontier (`fully initialized`);
+  LuckPerms 5.5.60 on all five servers (local storage).
+- RedisEconomy 4.5.12-wayfarer.1 placed but cannot run without a local Redis (disables
+  gracefully). CoreProtect-CE 24.0 cannot start on MC 26.2 (upstream). AdvancedPortals not
+  deployed (Velocity component missing from the drop).
+
 Remaining verification work (documented as NOT verified):
 - Waystone/launchpad interactive flows (bot use-item-on packets don't reach the 1.21.11
   backend through ViaVersion; needs an official client or targeted harness).
