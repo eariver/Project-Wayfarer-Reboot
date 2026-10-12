@@ -90,6 +90,13 @@ Still NOT live-verified: launchpad lifecycle, waystone place/teleport/lifecycle,
 EconomyShopGUI purchase click-path, BetterStructures fresh-chunk spawning, EliteMobs
 combat/loot, AdvancedPortals creation, non-op permission boundaries from client.
 Growth Pickaxe BROKEN→repair path (blocked: see P-10 recovery / durability note).
+- BROKEN arrival confirmed live: `tier=Iron progress=360/400 status=BROKEN` (110→360 =
+  full iron durability via manual mining; restored tool accumulates normally).
+- P-16 (design call, batch) BROKEN pickaxe still mines as an unbreakable vanilla pick
+  (no progress, clamp holds at max-1). Decide: cancel breaks while BROKEN vs allow.
+- P-17 mcMMO `Fishing.<clinit>` throws `ExceptionInInitializerError` on
+  FoodLevelChangeEvent (console, 2x) — same 26.2/API-drift family as P-12; mcMMO
+  fishing handling broken. Fix = compatible mcMMO build + restart.
 
 ## Owner playtest follow-up (2026-10-13, Main)
 
