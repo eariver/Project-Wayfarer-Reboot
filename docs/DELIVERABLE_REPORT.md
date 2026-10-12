@@ -203,6 +203,13 @@ carries only the sanitized template `docs/deploy/mariadb-setup.sql`).
   screen and **the verification status is unchanged**: HMC server join remains unverified.
   One bonus: once a join succeeds, the real account carries a valid chat session, which also
   removes the unsigned-command rejection on the 1.21.11 Frontier backend.
+  - **2026-10-12 final HMC attempt (user-run interactive REPL too)**: the Owner ran the
+    interactive REPL session documented above. Result: still no server connection
+    (velocity proxy log: 0 connection attempts from the HMC client). Root cause isolated:
+    HMC's REPL and the child client share the game's stdin, and the hmc-specifics runtime
+    never receives typed lines; direct stdin writes and PTY drivers don't reach the wrapped
+    stream either. A live Mojang access token was minted for these runs (HMC account
+    `5hak_3`); it is not stored in this repository and expires within 24h of the runs.
   - Operational side-fix found while retesting: Velocity's LuckPerms had a corrupted
     username from the earlier regex edit and was failing against MariaDB (`wayfarerroot`
     access denied); the config was corrected and Velocity restarted — proxy LuckPerms now
