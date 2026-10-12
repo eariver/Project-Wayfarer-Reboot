@@ -196,8 +196,20 @@ carries only the sanitized template `docs/deploy/mariadb-setup.sql`).
   non-interactive stdin (the REPL and the game compete for the same stdin, and neither the fifo
   nor a PTY driver delivers `gui`/`connect` to the game). This needs an interactive TTY session
   (or a future HMC/quickPlay fix) to complete `connect 127.0.0.1:25588`.
+- **2026-10-12 update — real account linked**: the Owner attached their Microsoft account
+  (`5hak_3`) to HMC; the client now authenticates against Mojang (`Setting user: 5hak_3`,
+  no `--offline`) and can target the production online-mode proxy (25577). However the headless
+  quickPlay/auto-join limitation is account-independent, so the client still stops at the title
+  screen and **the verification status is unchanged**: HMC server join remains unverified.
+  One bonus: once a join succeeds, the real account carries a valid chat session, which also
+  removes the unsigned-command rejection on the 1.21.11 Frontier backend.
+  - Operational side-fix found while retesting: Velocity's LuckPerms had a corrupted
+    username from the earlier regex edit and was failing against MariaDB (`wayfarerroot`
+    access denied); the config was corrected and Velocity restarted — proxy LuckPerms now
+    reports `Loading storage provider... [MYSQL]  Successfully enabled`.
 - Conclusion: **server join via HMC is unverified**; the Owner's official-client playtest remains
-  the verification vehicle for interactive gameplay.
+  the verification vehicle for interactive gameplay. To unblock via HMC, an interactive TTY is
+  needed (REPL + hmc-specifics: `gui` → `connect 127.0.0.1:25577` → `msg` / `/` commands).
 
 ## 7. Remaining known limitations
 
