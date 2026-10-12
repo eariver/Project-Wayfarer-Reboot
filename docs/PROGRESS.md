@@ -111,6 +111,12 @@ Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (befor
   or datapack + Main restart in the fix batch.
 - Fishing rod granted via console (`give`); EvenMoreFish fishing itself still untested.
 - Fishing: vanilla fish caught (basic loop OK); EMF custom fish/bait/competition unconfirmed.
+- P-12 EMF custom catches fully broken on Main: every PlayerFishEvent throws
+  `NoSuchMethodError: ExperienceConfig.isFishingExploitingPrevented()` (EMF 2.4.3 vs
+  deployed mcMMO 2.0.0-SNAPSHOT API drift; console 01:40:50~); handler aborts so only
+  vanilla/junk land. No config toggle avoids the mcMMO check path. Fix = compatible
+  mcMMO/EMF pair + Main restart (Owner artifacts). Secondary risk: NBT-API 2.15.7
+  "not supported on 26.2" warning may still affect custom-item delivery after the swap.
 
 ## Blockers / Owner-pending
 
