@@ -121,6 +121,12 @@ Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (befor
 - P-18 (UX, batch) enchant progression works but is invisible: Netherite tier verified
   live as Efficiency 2 + Unbreaking 1 (matches cycle Eff/Ub/Eff/Ub/Fortune), yet
   HIDE_ENCHANTS + hidden tooltip components conceal it. Show enchant summary in lore/GUI.
+- P-19 (spec divergence, Owner-stated, batch design decision): Owner recalls the original
+  concept as (a) enchant evolution starts only after Diamond transition, and
+  (b) Netherite is NOT automatic at 1200 — requires WM payment or a switching action.
+  Implemented behavior differs (enchants from evolution 1; auto-Netherite at 1200 in
+  `EvolutionPlan.defaults`). Batch must verify against Project_Wayfarer concept docs
+  and record the outcome in DECISIONS.md before changing thresholds/gating.
 - Durability shortcut unavailable: `/data modify` on player SelectedItem is rejected
   by the server ("Unable to modify player data", 2 attempts); no datapack present for
   `/item modify`. BROKEN test options: manual mining (~140 breaks left on Iron Eff1)
