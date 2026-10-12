@@ -110,6 +110,7 @@ Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (befor
   `/item modify`. BROKEN test options: manual mining (~140 breaks left on Iron Eff1)
   or datapack + Main restart in the fix batch.
 - Fishing rod granted via console (`give`); EvenMoreFish fishing itself still untested.
+- Fishing: vanilla fish caught (basic loop OK); EMF custom fish/bait/competition unconfirmed.
 
 ## Blockers / Owner-pending
 
