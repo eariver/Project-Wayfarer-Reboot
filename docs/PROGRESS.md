@@ -1,7 +1,7 @@
 # PROGRESS — Playable Alpha
 
 **Branch:** `work/playable-alpha`
-**Last updated:** 2026-10-11 (final session update)
+**Last updated:** 2026-10-13 (owner playtest session recorded; fixes deferred to batch)
 **HEAD at completion:** see `git log`; PR opened from this branch to `main`.
 
 ## Final status
@@ -44,6 +44,52 @@ Remaining verification work (documented as NOT verified):
 - MVI theme inventory separation (config written), GUI shop purchases, EconomyShopGUI and
   BetterStructures content (Owner-pending artifacts), official client playtest.
 
+## Owner playtest (2026-10-12〜13 JST, tester: kanpyo_himono, MC 26.2 → 127.0.0.1:25577)
+
+Pass (client-confirmed):
+- Main Growth Pickaxe: grant/evolve/status/branch OK; repair OK after WM grant (see mitigations).
+- Waymark shared balance Main↔Frontier OK.
+- MVI theme inventory separation (gate/WB/RF groups) OK — first live evidence.
+- WB traversal mechanics OK (~360 m travel via grapple/glide).
+- `/wff open` workaround opens Navigation GUI (incl. Return to Gate); `/server lobby|main|frontier` OK.
+
+Bugs found (code/config fixes deferred to batch; P-IDs for tracking):
+- P-1 `/shop` dead on Main: `WayfarerMainPlugin` removes `"shop"` from the command map
+  when EconomyShopGUI is present, killing Eshop's command; Wayfarer_Main's own `/shop`
+  (plugin.yml) has no executor. `/sellgui`/`/sellall` unaffected (not removed).
+- P-2 Navigation compass never opens GUI: `FrontierNavGui.ensureNavigationItem` builds
+  without `stamp()` so `identify()` returns null; unstamped copies accumulate each join
+  (observed COMPASS x2). Stamped grants via `/wayfarer-frontier grant` work.
+- P-3 Loadout granted in gate world: runtime `Wayfarer_Frontier/config.yml` had `world`
+  in `themes.worlds-beyond` (repo template is correct: only `frontier_iris`). Runtime
+  edited (line removed); needs Frontier restart. Evidence: join at [world] → grant →
+  `fell out of the world` 01:11:31.
+- P-4 Loadout granted once ever (`loadout` DB row blocks re-grant); death/void loss is
+  a dead end. Admin `grant` bypasses the flag (used twice as mitigation).
+- P-5 Frontier shop has no world gate: WB items (launchpad/waystone tool) buyable in
+  RF/gate, polluting other MVI groups. Placement side is gated (waystone: WB only;
+  launchpad: WB+RF — RF allowance needs a design call).
+- P-6 WB GUI arrival (0.5,80,0.5) is inside terrain: `suffocated in a wall` confirmed
+  01:24:16. Runtime arrival changed to y=67 (MV spawn 0,66,0 verified safe on foot);
+  needs Frontier restart. Iris cliffs are pack terrain (overworld v31100), not a
+  generation failure. RF `drowned` 01:23:43 is vanilla behavior, not a bug.
+- P-7 WB death loses everything (vanilla drops at death site + MVI same-group empty
+  profile on respawn; observed: slain by Enderman 360 m from spawn). Proposed: soulbound
+  stamped theme items, vanilla for the rest.
+- P-8 Grapple has no texture: hook is PAPER + `item-model leafgrapple:wood_grapple`,
+  jar bundles no pack, Frontier serves no pack (no ResourcePackManager there).
+  Function OK. Pack acquisition is Owner-pending (official vendor channels).
+
+Runtime mitigations applied (isolated env only, no code changes):
+- `/waymark give kanpyo_himono 5000` on main (Redis ZSCORE verified 5000).
+- Loadout re-grants via frontier console (01:25:52, 01:29:28; in-iris so WB group).
+- Runtime config edits pending Frontier restart: worlds-beyond minus `world`;
+  worlds-beyond arrival y 80→67.
+
+Still NOT live-verified: launchpad lifecycle, waystone place/teleport/lifecycle,
+EconomyShopGUI purchase click-path, BetterStructures fresh-chunk spawning, EliteMobs
+combat/loot, AdvancedPortals creation, non-op permission boundaries from client.
+
 ## Blockers / Owner-pending
 
 1. EconomyShopGUI 7.1.1 jar (SpigotMC account required).
@@ -51,6 +97,9 @@ Remaining verification work (documented as NOT verified):
 3. EliteMobs premium content (official vendor channels).
 4. Optional: SSH/RCON-free console access isn't needed; the offline proxy (25588) exists
    solely for the automated bot and should be removed or left disabled for production.
+5. (2026-10-13) LeafGrapple resource pack (official vendor channels) for hook textures.
+6. (2026-10-13) Fix batch P-1/P-2/P-4/P-5/P-6(safe-teleport)/P-7 + single Frontier
+   (+Main for P-1) restart at Owner's convenience.
 
 ## If continuing from here
 
