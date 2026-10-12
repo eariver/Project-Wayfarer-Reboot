@@ -182,11 +182,22 @@ carries only the sanitized template `docs/deploy/mariadb-setup.sql`).
   Frontier on restart. Main's ResourcePackManager now uses `selfHostPort: 25591`
   (`networkHttpOffset-v2: 2`). Production must size this per backend (each backend +2).
 
-**HeadlessMC** (Owner's request): the official MC 1.21.4 and 26.2 clients **boot headless**
-(`-lwjgl` patch, offline account, offline proxy at 25588). The client reaches the title screen but
-the `--quickPlayMultiplayer` auto-join does not fire in HMC 3.0.0-RC5 (no input path for the
-post-title consent). Client login/join remains to be exercised with the Owner's official client
-(already planned) or a future HMC version.
+**HeadlessMC** (Owner's request) — attempted thoroughly, NOT fully working:
+- The official client boots headless (HMC 3.0.0-RC5, `-lwjgl`): vanilla **1.21.4, 1.21.8 and
+  26.2** all reach the title screen (`options.txt` with `onboardAccessibility:false`,
+  `narrator:0`, `pauseOnLostFocus:false`). 1.21.4/1.21.11-class clients can reach all servers
+  through ViaVersion.
+- `--quickPlayMultiplayer` does not join: this is a **known HMC limitation** (issues #242/#8:
+  headless quickPlay is not implemented; versions past 1.20.2 only reach the title screen).
+- The supported path is **hmc-specifics** (Fabric/Forge/NeoForge console-command mod): installed
+  and launched Fabric 1.21.4 (crashed on OpenAL 1.1 in this container) and **Fabric 1.21.8
+  (boots cleanly, sound system degrades to off)** with `hmc-specifics-1.21.8-fabric`.
+- Remaining blocker: HMC's command forwarding to the running client does not work through
+  non-interactive stdin (the REPL and the game compete for the same stdin, and neither the fifo
+  nor a PTY driver delivers `gui`/`connect` to the game). This needs an interactive TTY session
+  (or a future HMC/quickPlay fix) to complete `connect 127.0.0.1:25588`.
+- Conclusion: **server join via HMC is unverified**; the Owner's official-client playtest remains
+  the verification vehicle for interactive gameplay.
 
 ## 7. Remaining known limitations
 
