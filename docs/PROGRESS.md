@@ -89,7 +89,8 @@ Runtime mitigations applied (isolated env only, no code changes):
 Still NOT live-verified: launchpad lifecycle, waystone place/teleport/lifecycle,
 EconomyShopGUI purchase click-path, BetterStructures fresh-chunk spawning, EliteMobs
 combat/loot, AdvancedPortals creation, non-op permission boundaries from client.
-Growth Pickaxe BROKEN→repair path (blocked: see P-10 recovery / durability note).
+Growth Pickaxe BROKEN→repair path: **verified live** (BROKEN arrival → `/wayfarer-main
+repair` → durability restored + progress resumes; Diamond at 400 next).
 - BROKEN arrival confirmed live: `tier=Iron progress=360/400 status=BROKEN` (110→360 =
   full iron durability via manual mining; restored tool accumulates normally).
 - P-16 (design call, batch) BROKEN pickaxe still mines as an unbreakable vanilla pick
