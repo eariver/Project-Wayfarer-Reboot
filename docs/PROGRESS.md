@@ -89,6 +89,27 @@ Runtime mitigations applied (isolated env only, no code changes):
 Still NOT live-verified: launchpad lifecycle, waystone place/teleport/lifecycle,
 EconomyShopGUI purchase click-path, BetterStructures fresh-chunk spawning, EliteMobs
 combat/loot, AdvancedPortals creation, non-op permission boundaries from client.
+Growth Pickaxe BROKEN→repair path (blocked: see P-10 recovery / durability note).
+
+## Owner playtest follow-up (2026-10-13, Main)
+
+Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (before P-10).
+- P-10 (critical) `/wayfarer-main reissue` bricks the tool: `reissue()` commits
+  `REVOKED` then `INSERT` with the same `tool_id` PK → `JdbcSQLIntegrityConstraintViolation`
+  (console 01:33:08); GUI Reissue button hits the same path (`GrowthGui:85`
+  performCommand). Live DB ends REVOKED: "No Growth Pickaxe", no progress, no GUI.
+  Schema root: PK on `tool_id` alone, reissue reuses the id for epoch+1.
+  Recovery performed via console: `admin grant` + `admin setprogress kanpyo_himono 110`
+  (new toolId `0fca3af1`, Iron/Eff1/Fortune, item in main hand verified via `data get`).
+  Stale dead item (`df4af96c`) must be discarded if found.
+  Note: `cp` of the live H2 file gave a stale ACTIVE snapshot — console `status` is
+  the source of truth for live state.
+- P-11 (minor) `/waymark pay` to self succeeds (no-op transfer); suggest rejecting.
+- Durability shortcut unavailable: `/data modify` on player SelectedItem is rejected
+  by the server ("Unable to modify player data", 2 attempts); no datapack present for
+  `/item modify`. BROKEN test options: manual mining (~140 breaks left on Iron Eff1)
+  or datapack + Main restart in the fix batch.
+- Fishing rod granted via console (`give`); EvenMoreFish fishing itself still untested.
 
 ## Blockers / Owner-pending
 
