@@ -117,6 +117,9 @@ Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (befor
   vanilla/junk land. No config toggle avoids the mcMMO check path. Fix = compatible
   mcMMO/EMF pair + Main restart (Owner artifacts). Secondary risk: NBT-API 2.15.7
   "not supported on 26.2" warning may still affect custom-item delivery after the swap.
+- P-13 (setup gap, fixed) EMF commands showed only HELP: all `emf.*` user nodes default
+  to OP; tester is non-op in LP `default`. Granted `emf.user` to `default` via console
+  (shared MariaDB, synced); retry `/emf shop` etc. from client to confirm.
 
 ## Blockers / Owner-pending
 
