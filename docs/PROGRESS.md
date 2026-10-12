@@ -124,7 +124,7 @@ Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (befor
   false` in EMF config (journal needs DB; toggle requires Main restart — batch item;
   sqlite local, no secrets; moot until P-12 fixed since journal tracks custom catches).
   `/emf top` runs; "No competition running" expected solo (30 scheduled, need ≥2 players;
-  force-start via console available on request).
+  Owner-deferred: no other players expected; force-start available if ever needed).
 
 ## Blockers / Owner-pending
 
