@@ -120,6 +120,11 @@ Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (befor
 - P-13 (setup gap, fixed) EMF commands showed only HELP: all `emf.*` user nodes default
   to OP; tester is non-op in LP `default`. Granted `emf.user` to `default` via console
   (shared MariaDB, synced); retry `/emf shop` etc. from client to confirm.
+  Follow-up: `/emf shop` OK. Journal "Not Accessible" is expected: `database.enabled:
+  false` in EMF config (journal needs DB; toggle requires Main restart — batch item;
+  sqlite local, no secrets; moot until P-12 fixed since journal tracks custom catches).
+  `/emf top` runs; "No competition running" expected solo (30 scheduled, need ≥2 players;
+  force-start via console available on request).
 
 ## Blockers / Owner-pending
 
