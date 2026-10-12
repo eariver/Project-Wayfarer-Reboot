@@ -94,6 +94,7 @@ Growth Pickaxe BROKEN→repair path (blocked: see P-10 recovery / durability not
   full iron durability via manual mining; restored tool accumulates normally).
 - P-16 (design call, batch) BROKEN pickaxe still mines as an unbreakable vanilla pick
   (no progress, clamp holds at max-1). Decide: cancel breaks while BROKEN vs allow.
+  Client-confirmed: mines as vanilla pick, progress frozen.
 - P-17 mcMMO `Fishing.<clinit>` throws `ExceptionInInitializerError` on
   FoodLevelChangeEvent (console, 2x) — same 26.2/API-drift family as P-12; mcMMO
   fishing handling broken. Fix = compatible mcMMO build + restart.
