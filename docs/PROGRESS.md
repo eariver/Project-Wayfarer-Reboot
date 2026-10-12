@@ -118,6 +118,9 @@ Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (befor
 - P-11 (minor) `/waymark pay` to self succeeds (no-op transfer); suggest rejecting.
 - P-15 (UX, batch) Growth Pickaxe shows progress but not durability: add `Durability X/Y`
   lore line (refresh on damage/repair/evolution), so BROKEN proximity is visible.
+- P-18 (UX, batch) enchant progression works but is invisible: Netherite tier verified
+  live as Efficiency 2 + Unbreaking 1 (matches cycle Eff/Ub/Eff/Ub/Fortune), yet
+  HIDE_ENCHANTS + hidden tooltip components conceal it. Show enchant summary in lore/GUI.
 - Durability shortcut unavailable: `/data modify` on player SelectedItem is rejected
   by the server ("Unable to modify player data", 2 attempts); no datapack present for
   `/item modify`. BROKEN test options: manual mining (~140 breaks left on Iron Eff1)
