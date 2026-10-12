@@ -92,6 +92,7 @@ combat/loot, AdvancedPortals creation, non-op permission boundaries from client.
 Growth Pickaxe BROKEN→repair path: **verified live** (BROKEN arrival → `/wayfarer-main
 repair` → durability restored + progress resumes; Diamond at 400 next).
 - Diamond evolution confirmed live (progress 400 reached, tier up + message).
+- Netherite evolution confirmed live (setprogress 1199 → 1 mined block → tier up).
 - BROKEN arrival confirmed live: `tier=Iron progress=360/400 status=BROKEN` (110→360 =
   full iron durability via manual mining; restored tool accumulates normally).
 - P-16 (design call, batch) BROKEN pickaxe still mines as an unbreakable vanilla pick
