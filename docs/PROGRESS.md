@@ -150,6 +150,17 @@ Preflight matched (remote HEAD/tree/main). Full fix batch implemented, built, de
 - P-8 grapple texture: function OK; LeafGrapple resource pack is Owner-pending (official vendor channels).
 - BetterStructures content packs / EconomyShopGUI: Owner-pending; unaffected by this batch.
 
+
+### Incident (2026-10-13, resolved)
+
+A stray server run with the repository as CWD leaked runtime files (`eula.txt`,
+`server.properties` incl. an RCON password, `logs/`) into commit d0ea68b of this public
+repository. Removal commit 4190dd9 untracks them and .gitignore now covers the whole
+runtime surface. The exposed RCON password has been disabled (`enable-rcon=false`); it was
+only used on the isolated PoC instance. No other secret was present in those files.
+Lesson recorded: all server processes must run with CWD inside `/home/eariver/wayfarer-dev/runtime`
+(`scripts/network.sh` and the console-relay pattern enforce this).
+
 ## Owner playtest follow-up (2026-10-13, Main)
 
 Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (before P-10).
