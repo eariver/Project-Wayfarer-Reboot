@@ -128,34 +128,58 @@ public final class ThemeItems {
     }
 
     /** First entry into Worlds Beyond: grant the permanent loadout once per player. */
+    /**
+     * C3/P-4/P-7: permanent loadout (elytra, grappling hook, navigation) is re-granted
+     * whenever the player holds no valid stamped copy — death, void and reconnect no
+     * longer leave the player stranded. Launchpads stay consumable: the first 2 are free,
+     * after that they must be bought in the frontier shop (no free resupply).
+     */
     public void grantLoadoutOnEntry(Player player) {
         String uuid = player.getUniqueId().toString();
-        boolean already = plugin.db().tx(c -> {
-            try (PreparedStatement ps = c.prepareStatement("SELECT item_type FROM loadout WHERE player_uuid=?")) {
-                ps.setString(1, uuid);
-                return ps.executeQuery().next();
-            }
-        });
-        if (already) return;
         long now = plugin.now();
+        boolean announced = false;
         for (ItemType type : new ItemType[]{ItemType.ELYTRA, ItemType.GRAPPLING_HOOK}) {
+            if (findInInventory(player, type) != null) continue;
             ItemStack item = build(type, player.getUniqueId(), "worlds_beyond", 0);
             if (item == null) continue;
             stamp(item, type, player.getUniqueId(), "worlds_beyond", 0);
             var left = player.getInventory().addItem(item);
             left.values().forEach(i -> player.getWorld().dropItemNaturally(player.getLocation(), i));
             record(uuid, type, now);
+            announced = true;
         }
-        ItemStack pad = build(ItemType.LAUNCHPAD, player.getUniqueId(), "worlds_beyond", 0);
-        stamp(pad, ItemType.LAUNCHPAD, player.getUniqueId(), "worlds_beyond", 0);
-        pad.setAmount(2);
-        var left = player.getInventory().addItem(pad);
-        left.values().forEach(i -> player.getWorld().dropItemNaturally(player.getLocation(), i));
-        record(uuid, ItemType.LAUNCHPAD, now);
-        player.sendMessage(Text.mm("<gold>You received the Worlds Beyond traversal loadout: <white>Elytra, Grappling Hook, 2 Launchpads</white>."));
+        boolean firstLoadout = !hasEverHadLoadout(uuid);
+        if (firstLoadout && hasSpaceFor(player, ItemType.LAUNCHPAD)) {
+            ItemStack pad = build(ItemType.LAUNCHPAD, player.getUniqueId(), "worlds_beyond", 0);
+            stamp(pad, ItemType.LAUNCHPAD, player.getUniqueId(), "worlds_beyond", 0);
+            pad.setAmount(2);
+            player.getInventory().addItem(pad);
+            record(uuid, ItemType.LAUNCHPAD, now);
+            announced = true;
+        }
+        if (announced) {
+            player.sendMessage(Text.mm(
+                    "<gold>Worlds Beyond loadout restored: <white>Elytra, Grappling Hook</white>"
+                            + (firstLoadout ? " + 2 Launchpads" : "") + "."));
+            plugin.getLogger().info("[loadout] restored permanent items for " + player.getName());
+        }
         if (!probeGrapple()) {
             player.sendMessage(Text.mm("<red>Grappling Hook unavailable (LeafGrapple adapter not ready)."));
         }
+    }
+
+    private boolean hasEverHadLoadout(String uuid) {
+        return plugin.db().tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("SELECT item_type FROM loadout WHERE player_uuid=? AND item_type=?")) {
+                ps.setString(1, uuid);
+                ps.setString(2, ItemType.LAUNCHPAD.name());
+                return ps.executeQuery().next();
+            }
+        });
+    }
+
+    private boolean hasSpaceFor(Player player, ItemType type) {
+        return player.getInventory().firstEmpty() >= 0;
     }
 
     private void record(String uuid, ItemType type, long now) {

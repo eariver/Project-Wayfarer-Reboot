@@ -4,15 +4,15 @@ main: io.github.eariver.wayfarer.main.WayfarerMainPlugin
 api-version: '1.21'
 description: Main-only Growth Pickaxe progression, repair, reissue and the Waymark shop.
 author: Project Wayfarer Reboot
-softdepend: [Vault, WaymarkProvider]
+softdepend: [Vault, WaymarkProvider, EconomyShopGUI]
 commands:
   wayfarer-main:
     description: Growth Pickaxe status, repair, reissue and branch control.
-    usage: /wayfarer-main [status|repair|reissue confirm|branch <fortune|silk>|admin ...]
+    usage: /wayfarer-main [status|repair|reissue confirm|branch <fortune|silk>|upgrade-netherite|admin ...]
     aliases: [wfmain]
-  shop:
-    description: Open the fixed-price Waymark shop.
-    usage: /shop
+  wayfarer-shop:
+    description: Fixed-price Waymark shop (also aliased to /shop when no shop plugin is present).
+    usage: /wayfarer-shop
 permissions:
   wayfarer.main.use:
     description: Use Growth Pickaxe features.

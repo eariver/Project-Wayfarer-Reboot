@@ -14,7 +14,14 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/** H2-backed persistence for Growth Pickaxe tools. */
+/**
+ * H2-backed persistence for Growth Pickaxe tools.
+ *
+ * <p>P-10 fix: {@code tool_id} is the stable primary key of the logical tool. A reissue
+ * bumps {@code epoch} in place via a conditional UPDATE, so a reissue can never delete
+ * the logical tool or violate the primary key. Legacy rows are migrated in place
+ * (netherite flag added with default false).
+ */
 public final class GrowthRepository {
 
     private final Db db;
@@ -30,17 +37,19 @@ public final class GrowthRepository {
                     progress BIGINT NOT NULL DEFAULT 0,
                     branch VARCHAR(16) NOT NULL DEFAULT 'FORTUNE',
                     status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE',
+                    netherite_upgraded BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at BIGINT NOT NULL,
                     updated_at BIGINT NOT NULL
                 )""",
-                "CREATE INDEX IF NOT EXISTS growth_tool_owner ON growth_tool(owner_uuid, status)");
+                "CREATE INDEX IF NOT EXISTS growth_tool_owner ON growth_tool(owner_uuid, status)",
+                "ALTER TABLE growth_tool ADD COLUMN IF NOT EXISTS netherite_upgraded BOOLEAN NOT NULL DEFAULT FALSE");
     }
 
     public Optional<GrowthTool> findActive(UUID owner) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT tool_id, owner_uuid, owner_name, epoch, progress, branch, status FROM growth_tool " +
-                            "WHERE owner_uuid=? AND status<>'REVOKED' ORDER BY epoch DESC")) {
+                    "SELECT tool_id, owner_uuid, owner_name, epoch, progress, branch, status, netherite_upgraded " +
+                            "FROM growth_tool WHERE owner_uuid=? AND status<>'REVOKED' ORDER BY epoch DESC")) {
                 ps.setString(1, owner.toString());
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) return Optional.of(read(rs));
@@ -53,8 +62,8 @@ public final class GrowthRepository {
     public List<GrowthTool> history(UUID owner) {
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT tool_id, owner_uuid, owner_name, epoch, progress, branch, status FROM growth_tool " +
-                            "WHERE owner_uuid=? ORDER BY epoch DESC")) {
+                    "SELECT tool_id, owner_uuid, owner_name, epoch, progress, branch, status, netherite_upgraded " +
+                            "FROM growth_tool WHERE owner_uuid=? ORDER BY epoch DESC")) {
                 ps.setString(1, owner.toString());
                 try (ResultSet rs = ps.executeQuery()) {
                     List<GrowthTool> out = new ArrayList<>();
@@ -65,11 +74,24 @@ public final class GrowthRepository {
         });
     }
 
+    public GrowthTool findByToolId(UUID toolId) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT tool_id, owner_uuid, owner_name, epoch, progress, branch, status, netherite_upgraded " +
+                            "FROM growth_tool WHERE tool_id=?")) {
+                ps.setString(1, toolId.toString());
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? read(rs) : null;
+                }
+            }
+        });
+    }
+
     public void insert(GrowthTool tool) {
         db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement(
-                    "INSERT INTO growth_tool(tool_id, owner_uuid, owner_name, epoch, progress, branch, status, created_at, updated_at) " +
-                            "VALUES(?,?,?,?,?,?,?,?,?)")) {
+                    "INSERT INTO growth_tool(tool_id, owner_uuid, owner_name, epoch, progress, branch, status, " +
+                            "netherite_upgraded, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")) {
                 long now = now();
                 ps.setString(1, tool.toolId().toString());
                 ps.setString(2, tool.ownerUuid().toString());
@@ -78,8 +100,9 @@ public final class GrowthRepository {
                 ps.setLong(5, tool.progress());
                 ps.setString(6, tool.branch().name());
                 ps.setString(7, tool.status().name());
-                ps.setLong(8, now);
+                ps.setBoolean(8, tool.netheriteUpgraded());
                 ps.setLong(9, now);
+                ps.setLong(10, now);
                 ps.executeUpdate();
             }
             return null;
@@ -89,17 +112,48 @@ public final class GrowthRepository {
     public void update(GrowthTool tool) {
         db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement(
-                    "UPDATE growth_tool SET owner_name=?, epoch=?, progress=?, branch=?, status=?, updated_at=? WHERE tool_id=?")) {
+                    "UPDATE growth_tool SET owner_name=?, epoch=?, progress=?, branch=?, status=?, " +
+                            "netherite_upgraded=?, updated_at=? WHERE tool_id=?")) {
                 ps.setString(1, tool.ownerName());
                 ps.setInt(2, tool.epoch());
                 ps.setLong(3, tool.progress());
                 ps.setString(4, tool.branch().name());
                 ps.setString(5, tool.status().name());
-                ps.setLong(6, now());
-                ps.setString(7, tool.toolId().toString());
+                ps.setBoolean(6, tool.netheriteUpgraded());
+                ps.setLong(7, now());
+                ps.setString(8, tool.toolId().toString());
                 ps.executeUpdate();
             }
             return null;
+        });
+    }
+
+    /**
+     * P-10: conditional epoch bump. Returns the number of affected rows (0 when the
+     * expected epoch no longer matches, i.e. another reissue already ran).
+     */
+    public int bumpEpoch(UUID toolId, int expectedEpoch) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE growth_tool SET epoch=epoch+1, updated_at=? WHERE tool_id=? AND epoch=? " +
+                            "AND status IN ('ACTIVE','BROKEN')")) {
+                ps.setLong(1, now());
+                ps.setString(2, toolId.toString());
+                ps.setInt(3, expectedEpoch);
+                return ps.executeUpdate();
+            }
+        });
+    }
+
+    /** Conditional flag flip used by the WM-gated netherite upgrade; returns affected rows. */
+    public int markNetheriteUpgraded(UUID toolId) {
+        return db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "UPDATE growth_tool SET netherite_upgraded=TRUE, updated_at=? WHERE tool_id=? AND netherite_upgraded=FALSE")) {
+                ps.setLong(1, now());
+                ps.setString(2, toolId.toString());
+                return ps.executeUpdate();
+            }
         });
     }
 
@@ -115,7 +169,8 @@ public final class GrowthRepository {
                 rs.getInt("epoch"),
                 rs.getLong("progress"),
                 EvolutionPlan.Branch.valueOf(rs.getString("branch")),
-                GrowthTool.Status.valueOf(rs.getString("status")));
+                GrowthTool.Status.valueOf(rs.getString("status")),
+                rs.getBoolean("netherite_upgraded"));
     }
 
     private static long now() {
@@ -128,9 +183,9 @@ public final class GrowthRepository {
                 s.getInt("stone", 100),
                 s.getInt("iron", 400),
                 s.getInt("diamond", 1200),
-                s.getInt("post-base", 800),
-                s.getInt("post-linear", 200),
-                s.getInt("post-quadratic", 40));
+                s.getInt("enchant-base", 800),
+                s.getInt("enchant-linear", 200),
+                s.getInt("enchant-quadratic", 40));
     }
 
     public static RepairPricing repairFromConfig(org.bukkit.configuration.ConfigurationSection s) {

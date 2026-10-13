@@ -122,6 +122,7 @@ public final class FrontierListener implements Listener {
 
     @org.bukkit.event.EventHandler
     public void onWorldChange(org.bukkit.event.player.PlayerChangedWorldEvent event) {
+        // C2/P-3: the loadout is only granted inside the configured Worlds Beyond world.
         if (plugin.worldsBeyond().contains(event.getPlayer().getWorld().getName())) {
             plugin.themeItems().grantLoadoutOnEntry(event.getPlayer());
         }

@@ -4,3 +4,6 @@ worlds:
   progress-allowlist:
     - minecraft:overworld
     - world
+
+# Netherite upgrade price in WM (provisional playtest value — not a final balance lock).
+netherite-upgrade-cost: 5000

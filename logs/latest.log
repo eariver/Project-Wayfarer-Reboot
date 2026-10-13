@@ -1,0 +1,6 @@
+[13:40:43] [ServerMain/INFO]: [bootstrap] Running Java 25 (OpenJDK 64-Bit Server VM 25.0.4.1+1-1-26.04.4-Ubuntu; Ubuntu null) on Linux 7.0.0-38-generic (amd64)
+[13:40:43] [ServerMain/INFO]: [bootstrap] Loading Paper 26.2-133-ver/26.2@58e6e45 (2026-10-09T17:19:44Z) for Minecraft 26.2
+[13:40:43] [ServerMain/INFO]: [PluginInitializerManager] Initializing plugins...
+[13:40:43] [ServerMain/INFO]: [PluginInitializerManager] Initialized 0 plugins
+[13:40:48] [DataConverter MCTypeRegistry init thread/INFO]: [ca.spottedleaf.dataconverter.minecraft.datatypes.MCTypeRegistry] Initialising converters for DataConverter...
+[13:40:48] [ServerMain/INFO]: You need to agree to the EULA in order to run the server. Go to eula.txt for more info.

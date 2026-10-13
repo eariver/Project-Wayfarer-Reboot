@@ -1,39 +1,50 @@
 package io.github.eariver.wayfarer.main;
 
+import io.github.eariver.wayfarer.common.Text;
 import io.github.eariver.wayfarer.main.cmd.GrowthCommand;
 import io.github.eariver.wayfarer.main.domain.EvolutionPlan;
 import io.github.eariver.wayfarer.main.domain.GrowthTool;
 import io.github.eariver.wayfarer.main.domain.RepairPricing;
 import io.github.eariver.wayfarer.main.gui.GrowthGui;
 import io.github.eariver.wayfarer.main.gui.ShopGui;
+import io.github.eariver.wayfarer.main.gui.ShopCommand;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
+import org.bukkit.GameRule;
+import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
-import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemDamageEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
-import java.util.List;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
- * Wayfarer_Main — Growth Pickaxe gameplay for the Main server (PoC alpha).
+ * Wayfarer_Main — Growth Pickaxe gameplay for the Main server (concept v0.0.5 aligned).
  *
- * <p>Progress is uniform 1.00 per qualifying block break (block weights withdrawn,
- * DEC-REQ-007). The physical item is authoritative for durability; the database stores
- * the logical tool (progress, tier, branch, status). Item loss, death and container
- * moves are vanilla-neutral; recovery uses a strictly-priced paid reissue.
+ * <p>Progress is uniform 1.00 per qualifying break (block weights withdrawn, DEC-REQ-007
+ * defaults). The logical tool lives in H2; the physical item carries PDC identity and is
+ * the authority for durability. Mining-time writes are buffered in memory and flushed by
+ * a checkpoint task (no per-break main-thread DB I/O).
  */
 public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
 
@@ -47,36 +58,63 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
     private GrowthGui growthGui;
     private ShopGui shopGui;
 
+    /** In-memory progress overlay; flushed by the checkpoint task. */
+    private final Map<UUID, Long> pendingProgress = new HashMap<>();
+    private final Map<UUID, GrowthTool> toolCache = new HashMap<>();
+    private final Set<UUID> dirty = new HashSet<>();
+    private final Set<UUID> reissueLocks = new HashSet<>();
+
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        FileConfiguration cfg = getConfig();
+        var cfg = getConfig();
         plan = EvolutionPlan.defaults();
         pricing = RepairPricing.defaults();
         repository = new GrowthRepository(new File(getDataFolder(), "growth.db"));
         progressWorlds = Set.copyOf(cfg.getStringList("worlds.progress-allowlist"));
 
         RegisteredServiceProvider<Economy> rsp = Bukkit.getServicesManager().getRegistration(Economy.class);
-        if (rsp != null) economy = rsp.getProvider();
+        if (rsp != null) {
+            economy = rsp.getProvider();
+            getLogger().info("Using economy provider: " + economy.getName());
+        }
 
         growthGui = new GrowthGui(this);
         shopGui = new ShopGui(this);
         getServer().getPluginManager().registerEvents(this, this);
         getServer().getPluginCommand("wayfarer-main").setExecutor(new GrowthCommand(this));
-        boolean economyShop = getServer().getPluginManager().getPlugin("EconomyShopGUI") != null;
-        if (economyShop) {
-            // Production shop is installed: yield the /shop command to it.
+
+        // P-1: never touch another plugin's command map. Our fallback /shop is only
+        // registered when no other shop plugin (e.g. EconomyShopGUI, which registers
+        // /shop dynamically at runtime) is installed and enabled.
+        var shopPlugin = getServer().getPluginManager().getPlugin("EconomyShopGUI");
+        boolean shopTaken = shopPlugin != null && shopPlugin.isEnabled();
+        if (shopTaken) {
+            getLogger().info("Another plugin provides /shop; fallback available via /wayfarer-shop");
+        } else {
+            getServer().getPluginCommand("wayfarer-shop").setExecutor(new ShopCommand(this));
             try {
-                getServer().getCommandMap().getKnownCommands().remove("shop");
-            } catch (Exception ignored) {
+                Object map = getServer().getClass().getMethod("getCommandMap").invoke(getServer());
+                Object cmdObj = getServer().getPluginCommand("wayfarer-shop");
+                map.getClass().getMethod("register", String.class, org.bukkit.command.Command.class)
+                        .invoke(map, "wayfarer", (org.bukkit.command.Command) cmdObj);
+                var known = (java.util.Map<String, org.bukkit.command.Command>) map.getClass()
+                        .getMethod("getKnownCommands").invoke(map);
+                known.put("shop", (org.bukkit.command.Command) cmdObj);
+                getLogger().info("Registered fallback /shop (no other shop provider present)");
+            } catch (Exception e) {
+                getLogger().warning("Fallback /shop not registered: " + e);
             }
-            getLogger().info("EconomyShopGUI detected; /shop handled by EconomyShopGUI");
         }
+
+        // checkpoint: buffered progress writes every 5 seconds
+        Bukkit.getScheduler().runTaskTimer(this, this::flushDirty, 100L, 100L);
         getLogger().info("Wayfarer_Main ready (growth pickaxe, worlds=" + progressWorlds + ")");
     }
 
     @Override
     public void onDisable() {
+        flushAll();
         if (repository != null) repository.close();
     }
 
@@ -96,6 +134,10 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         return economy;
     }
 
+    public boolean economyAvailable() {
+        return economy != null && economy.isEnabled();
+    }
+
     public Set<String> progressWorlds() {
         return progressWorlds;
     }
@@ -108,85 +150,193 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         return shopGui;
     }
 
-    public static void setDebug(boolean value) {
-        debug = value;
-    }
-
     public NamespacedKey key(String name) {
         return new NamespacedKey(this, name);
     }
 
-    /** Tier for a cumulative progress count. */
+    public static void setDebug(boolean value) {
+        debug = value;
+    }
+
     public int tierFor(long progress) {
         return plan.tierFor(progress);
     }
 
+    /** Live progress for a player: buffered overlay first, then DB cache. */
+    public long progressOf(UUID owner) {
+        synchronized (pendingProgress) {
+            Long buffered = pendingProgress.get(owner);
+            if (buffered != null) return buffered;
+        }
+        GrowthTool cached = toolCache.get(owner);
+        return cached != null ? cached.progress() : 0;
+    }
+
+    public GrowthTool toolOf(UUID owner) {
+        GrowthTool cached = toolCache.get(owner);
+        if (cached != null) return cached;
+        GrowthTool active = repository.findActive(owner).orElse(null);
+        if (active != null) toolCache.put(owner, active);
+        return active;
+    }
+
     /**
-     * Grant a fresh stone pickaxe to a player with no active tool (first login only).
-     * Existing tools are never auto-redelivered — recovery is the paid reissue path.
+     * Register break progress. Runs on the main thread; the DB write is deferred to the
+     * checkpoint task so block breaking does no synchronous I/O.
      */
-    public void ensureFirstTool(Player player) {
-        if (repository.findActive(player.getUniqueId()).isPresent()) return;
-        UUID toolId = UUID.randomUUID();
-        GrowthTool tool = new GrowthTool(toolId, player.getUniqueId(), player.getName(), 0, 0L,
-                EvolutionPlan.Branch.FORTUNE, GrowthTool.Status.ACTIVE);
-        repository.insert(tool);
-        giveCurrentItem(player, tool);
-        player.sendMessage(io.github.eariver.wayfarer.common.Text.mm(
-                "<gold>You received a <white>Pickaxe of Growth</white>. Mine to make it evolve!"));
-    }
-
-    /** Give/refresh the player's current tool item (full inventory preferred, then drop at feet). */
-    public void giveCurrentItem(Player player, GrowthTool tool) {
-        int tier = tierFor(tool.progress());
-        ItemStack item = GrowthItems.build(this, tool, tier);
-        var leftover = player.getInventory().addItem(item);
-        leftover.values().forEach(i -> player.getWorld().dropItemNaturally(player.getLocation(), i));
-    }
-
-    /** Register break progress for the player if the held item is their active pickaxe. */
     public void registerBreak(Player player, ItemStack held) {
         GrowthTool.Identity id = GrowthItems.identify(this, held);
         if (id == null || !id.ownerUuid().equals(player.getUniqueId().toString())) return;
-        GrowthTool tool = repository.findActive(player.getUniqueId()).orElse(null);
+        GrowthTool tool = toolOf(player.getUniqueId());
         if (tool == null || tool.status() == GrowthTool.Status.REVOKED) return;
         if (!tool.toolId().toString().equals(id.toolId()) || tool.epoch() != id.epoch()) return;
         if (tool.status() == GrowthTool.Status.BROKEN) return;
         if (!progressWorlds.contains(player.getWorld().getName())) return;
 
         int before = tierFor(tool.progress());
-        GrowthTool updated = tool.withProgress(tool.progress() + 1);
+        long next = tool.progress() + 1;
+        pendingProgress.put(player.getUniqueId(), next);
+        dirty.add(player.getUniqueId());
+        int after = tierFor(next);
+        if (after > before) {
+            // evolution: persist immediately (material/enchants change) and rebuild the item
+            GrowthTool evolved = tool.withProgress(next);
+            repository.update(evolved);
+            toolCache.put(player.getUniqueId(), evolved);
+            pendingProgress.remove(player.getUniqueId());
+            dirty.remove(player.getUniqueId());
+            ItemStack item = Items.rebuildPreservingDamage(this, evolved, held);
+            player.getInventory().setItemInMainHand(item);
+            player.sendMessage(Text.mm("<gold>Your Pickaxe of Growth evolved to <white><tier></white>!",
+                    "tier", GrowthItems.tierName(after, evolved.netheriteUpgraded())));
+            if (debug) {
+                getLogger().info("[growth-debug] " + player.getName() + " evolved to " + after);
+            }
+        } else {
+            GrowthItems.applyDisplay(this, held, tool.withProgress(next), after, held.getDurability());
+        }
         if (debug) {
             getLogger().info("[growth-debug] " + player.getName() + " break world=" + player.getWorld().getName()
-                    + " progress=" + updated.progress() + " allowed=" + progressWorlds.contains(player.getWorld().getName()));
-        }
-        repository.update(updated);
-        int after = tierFor(updated.progress());
-        if (after > before) {
-            updated = updated.withStatus(GrowthTool.Status.ACTIVE);
-            repository.update(updated);
-            // physical evolution: rebuild item in hand, restore durability
-            ItemStack evolved = GrowthItems.build(this, updated, after);
-            player.getInventory().setItemInMainHand(evolved);
-            player.sendMessage(io.github.eariver.wayfarer.common.Text.mm(
-                    "<gold>Your Pickaxe of Growth evolved to <white><tier></white>!",
-                    "tier", GrowthItems.tierName(after)));
-        } else {
-            GrowthItems.applyDisplay(this, held, updated, after);
+                    + " progress=" + next + " allowed=" + progressWorlds.contains(player.getWorld().getName()));
         }
     }
 
+    private void flushDirty() {
+        synchronized (pendingProgress) {
+            if (dirty.isEmpty()) return;
+            for (UUID owner : new HashSet<>(dirty)) {
+                Long progress = pendingProgress.get(owner);
+                if (progress == null) {
+                    dirty.remove(owner);
+                    continue;
+                }
+                GrowthTool tool = toolCache.get(owner);
+                if (tool == null || tool.progress() == progress) {
+                    dirty.remove(owner);
+                    continue;
+                }
+                GrowthTool updated = tool.withProgress(progress);
+                try {
+                    repository.update(updated);
+                    toolCache.put(owner, updated);
+                } catch (Exception e) {
+                    getLogger().log(Level.WARNING, "progress checkpoint failed for " + owner, e);
+                    continue;
+                }
+                pendingProgress.remove(owner);
+                dirty.remove(owner);
+            }
+        }
+    }
+
+    private void flushAll() {
+        synchronized (pendingProgress) {
+            for (Map.Entry<UUID, Long> e : pendingProgress.entrySet()) {
+                GrowthTool tool = toolCache.get(e.getKey());
+                if (tool != null && tool.progress() != e.getValue()) {
+                    tool = tool.withProgress(e.getValue());
+                    repository.update(tool);
+                    toolCache.put(e.getKey(), tool);
+                }
+            }
+            pendingProgress.clear();
+            dirty.clear();
+        }
+    }
+
+    public void cacheTool(Player player, GrowthTool tool) {
+        toolCache.put(player.getUniqueId(), tool);
+        pendingProgress.put(player.getUniqueId(), tool.progress());
+    }
+
+    public boolean tryReissueLock(Player player) {
+        return reissueLocks.add(player.getUniqueId());
+    }
+
+    public void releaseReissueLock(Player player) {
+        reissueLocks.remove(player.getUniqueId());
+    }
+
+    /** Grant a fresh stone tool for a player with no logical tool (first join only). */
+    public void ensureFirstTool(Player player) {
+        if (repository.findActive(player.getUniqueId()).isPresent()) return;
+        UUID toolId = UUID.randomUUID();
+        GrowthTool tool = new GrowthTool(toolId, player.getUniqueId(), player.getName(), 0, 0L,
+                EvolutionPlan.Branch.FORTUNE, GrowthTool.Status.ACTIVE, false);
+        repository.insert(tool);
+    }
+
+    /** Sync variant of the first-tool grant, for admin commands. */
+    public void ensureFirstToolTarget(Player player) {
+        if (repository.findActive(player.getUniqueId()).isPresent()) return;
+        UUID toolId = UUID.randomUUID();
+        GrowthTool tool = new GrowthTool(toolId, player.getUniqueId(), player.getName(), 0, 0L,
+                EvolutionPlan.Branch.FORTUNE, GrowthTool.Status.ACTIVE, false);
+        repository.insert(tool);
+    }
+
+    /**
+     * Async join flow (concept §5.1): only DB work happens off the main thread; every
+     * Bukkit inventory call is scheduled back and guarded by an isOnline() recheck.
+     */
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
-        // Initial database load happens on the main thread with zero I/O cost per tick;
-        // the H2 file is local and fast, matching production's MariaDB path in shape only.
+        Player player = event.getPlayer();
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try {
-                ensureFirstTool(event.getPlayer());
+                ensureFirstTool(player);
             } catch (Exception e) {
-                getLogger().log(Level.WARNING, "first-tool grant failed for " + event.getPlayer().getName(), e);
+                getLogger().log(Level.WARNING, "first-tool lookup failed for " + player.getName(), e);
+                return;
             }
+            GrowthTool tool = repository.findActive(player.getUniqueId()).orElse(null);
+            if (tool == null) return;
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!player.isOnline()) return;
+                cacheTool(player, tool);
+                if (!hasOwnedItem(player, tool)) {
+                    giveCurrentItem(player, tool);
+                    player.sendMessage(Text.mm(
+                            "<gold>You received a <white>Pickaxe of Growth</white>. Mine to make it evolve!"));
+                }
+            });
         });
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        Player player = event.getPlayer();
+        GrowthTool tool = toolCache.get(player.getUniqueId());
+        Long pending = pendingProgress.get(player.getUniqueId());
+        if (tool != null && pending != null && tool.progress() != pending) {
+            GrowthTool updated = tool.withProgress(pending);
+            repository.update(updated);
+            toolCache.put(player.getUniqueId(), updated);
+        }
+        toolCache.remove(player.getUniqueId());
+        pendingProgress.remove(player.getUniqueId());
+        dirty.remove(player.getUniqueId());
+        reissueLocks.remove(player.getUniqueId());
     }
 
     @EventHandler
@@ -195,54 +345,126 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         Player player = event.getPlayer();
         if (!progressWorlds.contains(player.getWorld().getName())) return;
         ItemStack held = player.getInventory().getItemInMainHand();
-        if (GrowthItems.identify(this, held) == null) return;
+        GrowthTool.Identity id = GrowthItems.identify(this, held);
+        if (id == null) return;
+        GrowthTool tool = toolOf(player.getUniqueId());
+        if (tool == null || tool.status() != GrowthTool.Status.BROKEN) {
+            // P-16: a BROKEN tool is a gray-dye shell and must not break blocks at all.
+            if (tool != null && tool.status() == GrowthTool.Status.BROKEN) {
+                event.setCancelled(true);
+            }
+        }
+        if (event.isCancelled()) return;
+        if (tool == null || !tool.toolId().toString().equals(id.toolId()) || tool.epoch() != id.epoch()) return;
         if (!GrowthItems.isPickaxe(held)) return;
-        // keep it on the main thread for inventory mutation but persistence is fast/local
         registerBreak(player, held);
     }
 
-    @EventHandler
-    public void onDamage(PlayerItemDamageEvent event) {
+    /** P-16: a broken tool cannot mine, attack or interact with blocks. */
+    @EventHandler(ignoreCancelled = false)
+    public void onInteract(PlayerInteractEvent event) {
+        if (event.getHand() != EquipmentSlot.HAND) return;
         ItemStack item = event.getItem();
         GrowthTool.Identity id = GrowthItems.identify(this, item);
-        if (id == null) return;
-        Player player = event.getPlayer();
-        if (!id.ownerUuid().equals(player.getUniqueId().toString())) return;
-        GrowthTool tool = repository.findActive(player.getUniqueId()).orElse(null);
-        if (tool == null) return;
-        if (tool.toolId().toString().equals(id.toolId()) && tool.epoch() == id.epoch()
-                && tool.status() != GrowthTool.Status.REVOKED) {
-            // The physical item stays authoritative, but we prevent the silent destruction
-            // of a tool whose progress lives in the database: clamp at one point of damage
-            // left and record the BROKEN state so repair/reissue can be priced.
-            ItemMetaProbe probe = new ItemMetaProbe(item);
-            if (probe.damage() + event.getDamage() >= probe.maxDurability()) {
-                event.setCancelled(true);
-                event.getItem().setDurability((short) (probe.maxDurability() - 1));
-                GrowthTool broken = tool.withStatus(GrowthTool.Status.BROKEN);
-                repository.update(broken);
-                player.sendMessage(io.github.eariver.wayfarer.common.Text.mm(
-                        "<red>Your Pickaxe of Growth is broken. <gold>Repair it with /wayfarer-main repair"));
-            }
-        }
-    }
-
-    @EventHandler
-    public void onInteract(PlayerInteractEvent event) {
-        if (event.getItem() == null) return;
-        GrowthTool.Identity id = GrowthItems.identify(this, event.getItem());
-        if (id == null) return;
-        if (!id.ownerUuid().equals(event.getPlayer().getUniqueId().toString())) return;
+        if (id == null || !id.ownerUuid().equals(event.getPlayer().getUniqueId().toString())) return;
+        GrowthTool tool = toolOf(event.getPlayer().getUniqueId());
+        if (tool == null || tool.status() != GrowthTool.Status.BROKEN) return;
+        // still allow the GUI so the repair route stays reachable
         if (event.getAction().name().startsWith("RIGHT_CLICK")) {
             event.setCancelled(true);
             growthGui.open(event.getPlayer());
         }
     }
 
-    /** Durability probe helper (kept tiny; see onDamage). */
-    private record ItemMetaProbe(short damage, short maxDurability) {
-        ItemMetaProbe(ItemStack item) {
-            this(item.getDurability(), item.getType().getMaxDurability());
+    @EventHandler(ignoreCancelled = false)
+    public void onEntityDamage(EntityDamageByEntityEvent event) {
+        if (!(event.getDamager() instanceof Player player)) return;
+        ItemStack held = player.getInventory().getItemInMainHand();
+        GrowthTool.Identity id = GrowthItems.identify(this, held);
+        if (id == null) return;
+        GrowthTool tool = toolOf(player.getUniqueId());
+        if (tool != null && tool.status() == GrowthTool.Status.BROKEN) {
+            event.setCancelled(true);
         }
+    }
+
+    @EventHandler(ignoreCancelled = false)
+    public void onDamage(PlayerItemDamageEvent event) {
+        ItemStack item = event.getItem();
+        GrowthTool.Identity id = GrowthItems.identify(this, item);
+        if (id == null) return;
+        Player player = event.getPlayer();
+        if (!id.ownerUuid().equals(player.getUniqueId().toString())) return;
+        GrowthTool tool = toolOf(player.getUniqueId());
+        if (tool == null) return;
+        if (!tool.toolId().toString().equals(id.toolId()) || tool.epoch() != id.epoch()) return;
+        if (tool.status() == GrowthTool.Status.REVOKED) return;
+        short max = item.getType().getMaxDurability();
+        int projected = item.getDurability() + event.getDamage();
+        if (projected >= max) {
+            // clamp before destruction and record BROKEN; the physical item becomes the
+            // gray-dye shell so it cannot keep mining (concept v0.0.5 §19)
+            event.setCancelled(true);
+            GrowthTool broken = tool.withStatus(GrowthTool.Status.BROKEN);
+            repository.update(broken);
+            toolCache.put(player.getUniqueId(), broken);
+            pendingProgress.put(player.getUniqueId(), broken.progress());
+            ItemStack shell = GrowthItems.buildBroken(this, broken);
+            player.getInventory().setItemInMainHand(shell);
+            player.playSound(player.getLocation(), org.bukkit.Sound.ENTITY_ITEM_BREAK, 1f, 1f);
+            player.sendMessage(Text.mm(
+                    "<red>Your Pickaxe of Growth is broken. <gold>Repair it with /wayfarer-main repair"));
+        } else {
+            GrowthItems.applyDisplay(this, item, tool, tierFor(tool.progress()), projected);
+        }
+    }
+
+    @EventHandler(ignoreCancelled = false)
+    public void onDrop(PlayerDropItemEvent event) {
+        GrowthTool.Identity id = GrowthItems.identify(this, event.getItemDrop().getItemStack());
+        if (id == null || !id.ownerUuid().equals(event.getPlayer().getUniqueId().toString())) return;
+        // owner bind: no manual drop (concept §4)
+        event.setCancelled(true);
+    }
+
+    /** The tool is kept on death (concept §19 死亡時保持); everything else behaves vanilla. */
+    @EventHandler
+    public void onDeath(org.bukkit.event.entity.PlayerDeathEvent event) {
+        Player player = event.getPlayer();
+        var it = event.getDrops().iterator();
+        while (it.hasNext()) {
+            GrowthTool.Identity id = GrowthItems.identify(this, it.next());
+            if (id != null && id.ownerUuid().equals(player.getUniqueId().toString())) {
+                it.remove();
+            }
+        }
+    }
+
+    /** Death drops aside, give the item back in the main hand slot when missing. */
+    @EventHandler
+    public void onRespawn(org.bukkit.event.player.PlayerRespawnEvent event) {
+        Player player = event.getPlayer();
+        Bukkit.getScheduler().runTask(this, () -> {
+            GrowthTool tool = toolOf(player.getUniqueId());
+            if (tool == null) return;
+            if (!hasOwnedItem(player, tool)) giveCurrentItem(player, tool);
+        });
+    }
+
+    private boolean hasOwnedItem(Player player, GrowthTool tool) {
+        for (ItemStack item : player.getInventory().getContents()) {
+            GrowthTool.Identity id = GrowthItems.identify(this, item);
+            if (id != null && id.toolId().equals(tool.toolId().toString()) && id.epoch() == tool.epoch()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Give/refresh the current tool item. */
+    public void giveCurrentItem(Player player, GrowthTool tool) {
+        ItemStack item = GrowthItems.build(this, tool);
+        var leftover = player.getInventory().addItem(item);
+        leftover.values().forEach(i -> player.getWorld().dropItemNaturally(player.getLocation(), i));
     }
 }

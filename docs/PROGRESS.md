@@ -102,6 +102,54 @@ repair` → durability restored + progress resumes; Diamond at 400 next).
   FoodLevelChangeEvent (console, 2x) — same 26.2/API-drift family as P-12; mcMMO
   fishing handling broken. Fix = compatible mcMMO build + restart.
 
+## Post-playtest repair batch (2026-10-13, HEAD 680e7575 → ba39ca7 on work/playable-alpha)
+
+Preflight matched (remote HEAD/tree/main). Full fix batch implemented, built, deployed to the isolated runtime and verified with the protocol bot + RCON.
+
+### Fixed and live-verified (Main)
+
+| P-ID | Root cause | Fix | Evidence |
+|---|---|---|---|
+| P-10 | reissue() committed REVOKED then INSERTed the same `tool_id` PK → constraint violation, tool lost forever | Reissue now bumps `epoch` in place via a conditional `UPDATE ... WHERE tool_id=? AND epoch=?`; per-player reissue lock; WM charge verified (`transactionSuccess()`) BEFORE the bump; rows==0 → refund; DB failure after charge → recoverable epoch state + message; stale epochs rejected by identify() | `Reissued for 248 WM (epoch 2); progress, branch and upgrades kept.` — epoch 0→1→2, progress 1199/1200 kept, tier/branch/netherite kept, tool never bricked; also `tier=Netherite` after upgrade |
+| P-1 | WashfarerMainPlugin removed `shop` from the command map, killing EconomyShopGUI | No command-map mutation at all. EconomyShopGUI detected via `PluginManager.getPlugin(...)`+isEnabled(); `/shop` fallback (`/wayfarer-shop`) registered only when no shop plugin exists | `Shop >> There is an update available for EconomyShopGUI...` (the bot's `/shop` now reaches EconomyShopGUI); log: `Another plugin provides /shop; fallback available via /wayfarer-shop` |
+| P-12/P-17 | Deployed mcMMO was a **2018 GitHub 2.0.0 jar** (`2.0.0-SNAPSHOT`) — no `ExperienceConfig.isFishingExploitingPrevented`, `McMMOReplaceVanillaTreasureEvent`, no 26.x support | Built mcMMO **2.3.003-SNAPSHOT from mcMMO-Dev source** (pom target 26.1.1-R0.1) and deployed; mcMMO keeps its shared MariaDB storage | Both servers now run `mcMMO 2.3.003-SNAPSHOT`; 0 occurrences of `isFishingExploitingPrevented` / `ExceptionInInitializerError`; mcMMO loads fishing treasures from the shared DB (expense tables update on boot) |
+| P-11 | `/waymark pay <self>` succeeded | Self-payment rejected (`You cannot pay yourself.`); pay checks withdrawal success before crediting | Live: `You cannot pay yourself.` |
+| P-13 | EMF user nodes default op | (verified again after restart) `default` group holds `emf.user=1` in shared MariaDB | non-op bot ran `/emf shop` + `/emf journal` with no permission error |
+| — | EMF journal "not accessible" | `database.enabled: true` (sqlite, local, no secrets) + Main restart | `evenmorefish.db` created; `/emf journal` no longer prints "not accessible" |
+
+### Fixed and live-verified (Growth Pickaxe spec, P-19/B1)
+
+- Enchant evolution now starts only **after Diamond**: tier 3 (Diamond, progress &lt; 1200) → `enchants=none`; tier 4 (progress 1200) → `enchants=Efficiency 1`.
+- Netherite is a **persistent paid upgrade**, never an automatic evolution: `/wayfarer-main upgrade-netherite` (5000 WM provisional, configurable, documented as not a final balance) with double-charge guard (`markNetheriteUpgraded` conditional UPDATE + rows check → refund).
+- After the upgrade: `tier=Netherite ... netherite=true`; the flag survives reissue, recalculation and config changes.
+- Material thresholds 100/400/1200 unchanged → **existing player progress preserved** (wf_admin's tool stayed at its Diamond/Netherite state; original `tier=Diamond progress=424` seen live before the upgrade).
+- Migration note recorded: tools that reached the old auto-Netherite condition (progress ≥ 1200) are treated as upgraded=true implicitly only through the paid path; no data was wiped.
+
+### Fixed (code, live-verified for the command paths)
+
+- P-15/P-18: lore now shows `Progress n/m`, progress bar, `Enchants: Efficiency X, ...`, `Durability X/Y` (red/gold/white by wear), Branch, Netherite unlock; `/wayfarer-main status` mirrors it. Verified: custom_name `Netherite Pickaxe of Growth` on the live item.
+- P-16: BROKEN state converts the item to a `GRAY_DYE` shell ("壊れた成長のピッケル"), blocks block-breaking and entity damage, keeps PDC identity, is kept on death, GUI stays open, `/wayfarer-main repair` restores. Fully live-verified earlier (BROKEN → repair → ACTIVE); clamping code reworked to the shell.
+- A4: repairs/upgrades reject when the economy is unavailable or funds are short (no free service), held-item identity must match the active tool/epoch before replacement, branch switch only replaces the item when it really is the player's tool.
+
+### Fixed (Frontier, deployed — see DELIVERABLE_REPORT for verification status)
+
+- P-2 (C1): navigation compass is stamped on every grant path (`stamp()` after `build()`); unstamped legacy compasses are removed on join. GUI opens for non-op via right-click.
+- P-3 (C2): repo template restricts `worlds-beyond` to `frontier_iris` only (`world` removed); `safeTeleport` scans for the first solid ground with 2 air blocks above at the target column (no terrain/void burial); arrival y aligned to 67 (verified safe on foot).
+- P-4/P-7 (C3): permanent loadout (elytra, grappling hook, navigation) is re-granted whenever no stamped copy exists in the player's inventory — death/void/reconnect no longer strand players. Launchpads remain a one-time free initial grant of 2, purchasable afterwards (no free resupply).
+- P-5 (C4): frontier shop validates `worlds-beyond` membership at open AND at purchase click (world switches while the GUI is open are rejected).
+
+### Infrastructure / operations
+
+- DB backups (pre-fix): consistent snapshots taken while servers were stopped (growth.db.mv.db copy + `mysqldump` of wayfarer_luckperms/wayfarer_mcmmo).
+- RCON enabled on Main (`enable-rcon`, password only in the isolated runtime) — no secrets committed.
+- mcMMO source build steps documented in DECISIONS.md.
+
+### Not verified / still open
+
+- Frontier live client playtest (gates, grapple, launchpad bursts, waystones, MVI group swap visually) — the bot cannot deliver use-item-on packets to 1.21.11 through ViaVersion; Owner client remains the vehicle.
+- P-8 grapple texture: function OK; LeafGrapple resource pack is Owner-pending (official vendor channels).
+- BetterStructures content packs / EconomyShopGUI: Owner-pending; unaffected by this batch.
+
 ## Owner playtest follow-up (2026-10-13, Main)
 
 Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (before P-10).

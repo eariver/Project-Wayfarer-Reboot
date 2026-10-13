@@ -58,3 +58,24 @@ runs in the sandbox; RedisEconomy on Main/Frontier (clusterId waymark) registers
 WaymarkProvider was changed to detect an existing Vault provider and delegate `/waymark` commands to
 it instead of its own ledger (the H2 fallback only applies when no RedisEconomy is present). This
 gives production parity for the shared Waymark while keeping the PoC self-contained when Redis is absent.
+
+## D-2026-10-13-01: Growth Pickaxe spec realignment (P-19)
+
+Owner-stated intent checked against concepts/plugins/main/Project_Wayfarer_Growth_Tool_Concept_v0.0.5 §14/§15/§17/§19:
+- Enchantment evolution starts AFTER Diamond; the five-step cycle (Eff, Unb, Eff, Unb, Fortune) is derived from the enchant
+  step count, never stored per enchant.
+- Netherite is NOT a progress evolution: it is a persistent, WM-paid unlock on top of a Diamond base tool
+  (`netherite_upgraded` flag + `netherite_upgraded_at` semantics), never reverted by config recalculation.
+- Material thresholds (100/400/1200) and the post-Diamond increments (800/200/40) stay at the documented baseline so
+  existing player data is preserved. Wooden as the starting material was NOT restored — existing tools sit at
+  Stone/Diamond progress and re-basing would alter live data.
+The Waymarer_Main reissue no longer uses a REVOKED+INSERT pair (P-10): the logical tool_id is stable and the epoch is
+bumped in place inside one conditional UPDATE, so a reissue can never delete or violate the tool.
+
+## D-2026-10-13-02: mcMMO replaced with a source build (P-12/P-17)
+
+The previously deployed mcMMO was the 2.0.0 jar from the mcMMO-Dev GitHub releases page (2018) — it lacks the
+`ExperienceConfig.isFishingExploitingPrevented` API that EvenMoreFish 2.4.3 calls and has no Paper 26.x support.
+Fix: build mcMMO from current mcMMO-Dev source (pom target `26.1.1-R0.1-SNAPSHOT`, Java 17) with Maven and deploy the
+resulting `mcMMO 2.3.003-SNAPSHOT`. No player data was migrated: mcMMO still uses its shared MariaDB storage and its own
+table updates run on boot.

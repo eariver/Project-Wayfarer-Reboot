@@ -32,7 +32,16 @@ public final class ShopGui implements Listener {
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
 
+    /**
+     * C4/P-5: WB-only shop. Gated at open time AND re-checked at click time so world
+     * switches or GUI races cannot move theme items across the MVI groups (RF allowance
+     * for launchpads is an open design call — see docs/DECISIONS.md).
+     */
     public void open(Player player) {
+        if (!plugin.worldsBeyond().contains(player.getWorld().getName())) {
+            player.sendMessage(Text.mm("<red>The Frontier shop is only available in Worlds Beyond."));
+            return;
+        }
         ShopHolder holder = new ShopHolder();
         Inventory inv = Bukkit.createInventory(holder, 27, Text.mm("<dark_gray>Frontier Waymark Shop"));
         holder.setInventory(inv);
@@ -53,6 +62,12 @@ public final class ShopGui implements Listener {
         if (!(event.getInventory().getHolder() instanceof ShopHolder)) return;
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        // revalidate the theme at purchase time: world/group must still be Worlds Beyond
+        if (!plugin.worldsBeyond().contains(player.getWorld().getName())) {
+            player.closeInventory();
+            player.sendMessage(Text.mm("<red>Purchase cancelled: you left Worlds Beyond."));
+            return;
+        }
         ItemStack clicked = event.getCurrentItem();
         if (clicked == null) return;
         Material material = clicked.getType();

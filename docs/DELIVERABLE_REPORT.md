@@ -142,6 +142,24 @@ Multiverse-Core/NetherPortals, WorldEdit, WorldGuard.
 | **LuckPerms 5.5.60 (Bukkit + Velocity)** | Deployed on all five servers (backends use local file storage — no shared MariaDB in the sandbox, so permissions are per-server here). |
 | **advanced-portals 2.8.0 (spigot)** | **Not deployed**: the cross-server portal design needs the Velocity proxy component, which was not included in this drop. |
 
+## 6. Post-playtest repair batch (2026-10-13)
+
+Owner playtest feedback (P-1..P-19 in docs/PROGRESS.md) was fixed on `work/playable-alpha`.
+Summary of the batch:
+
+- **Main (live-verified)**: `/shop` restored to EconomyShopGUI (no command-map mutation); Growth Pickaxe reissue no
+  longer bricks the tool (epoch-in-place, charge-then-commit, refund/record paths); enchant evolution starts only after
+  Diamond; Netherite is an explicit 5000 WM (provisional) persistent upgrade; durability + enchant readouts in lore/status;
+  BROKEN is a non-functional gray-dye shell that repairs for WM; self-pay rejected; repairs refused without funds/economy.
+- **mcMMO**: root cause of EMF/mcMMO fishing breakage was the stale 2018 2.0.0 jar; rebuilt from mcMMO-Dev source
+  (2.3.003-SNAPSHOT) and deployed on Main+Frontier. EMF database enabled (sqlite) so the journal works.
+- **Frontier (deployed)**: navigation compass stamped + legacy-unstamped cleanup; Worlds Beyond allowlist restricted to
+  frontier_iris; safe-ground arrival scan; permanent loadout re-grant on loss; shop theme gate at open + click.
+- **Ops**: consistent DB snapshots before deploy; RCON on Main for verification (no secrets committed).
+
+Not live-verified: interactive waystone/launchpad flows (bot use-item-on does not traverse ViaVersion to 1.21.11),
+Owner-client playtest, MVI visual swap, BetterStructures/EconomyShopGUI content (Owner-pending), grapple texture pack.
+
 ## 6. Third integration pass (2026-10-11, Redis/MariaDB/AdvancedPortals/EliteMobs content/HeadlessMC)
 
 **RedisEconomy (production currency) is now the live economy provider.**

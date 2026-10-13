@@ -2,6 +2,7 @@ package io.github.eariver.wayfarer.frontier.gui;
 
 import io.github.eariver.wayfarer.common.Text;
 import io.github.eariver.wayfarer.frontier.WayfarerFrontierPlugin;
+import io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -25,13 +26,36 @@ public final class FrontierNavGui implements Listener {
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
 
+    /**
+     * C1/P-2: the navigation item is stamped on every path so identify() works and
+     * right-click opens this GUI. Unstamped legacy compasses from earlier builds are
+     * removed on join, so players never accumulate duplicates.
+     */
     public void ensureNavigationItem(Player player) {
-        if (plugin.themeItems().findInInventory(player) != null) return;
-        var tool = plugin.themeItems().build(
-                io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType.NAVIGATION,
-                player.getUniqueId(), "frontier", 0);
+        if (plugin.themeItems().findInInventory(player, ItemType.NAVIGATION) != null) return;
+        removeLegacyCompasses(player);
+        var items = plugin.themeItems();
+        ItemStack tool = items.build(ItemType.NAVIGATION, player.getUniqueId(), "frontier", 0);
+        items.stamp(tool, ItemType.NAVIGATION, player.getUniqueId(), "frontier", 0);
         var left = player.getInventory().addItem(tool);
         left.values().forEach(i -> player.getWorld().dropItemNaturally(player.getLocation(), i));
+    }
+
+    /** Remove unstamped "Wayfarer Navigation" compasses minted by earlier builds (P-2 migration). */
+    private void removeLegacyCompasses(Player player) {
+        for (int i = 0; i < player.getInventory().getSize(); i++) {
+            ItemStack item = player.getInventory().getItem(i);
+            if (item == null || item.getType() != Material.COMPASS) continue;
+            if (plugin.themeItems().identify(item) != null) continue;
+            ItemMeta meta = item.getItemMeta();
+            String name = meta != null && meta.hasDisplayName()
+                    ? net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                            .serialize(meta.displayName())
+                    : "";
+            if (name.contains("Wayfarer Navigation")) {
+                player.getInventory().setItem(i, null);
+            }
+        }
     }
 
     public void open(Player player) {
@@ -70,18 +94,16 @@ public final class FrontierNavGui implements Listener {
         player.closeInventory();
         switch (clicked.getType()) {
             case ELYTRA -> {
-                var arrival = plugin.arrival("worlds-beyond");
-                if (arrival != null) {
-                    player.teleport(arrival);
+                if (plugin.safeTeleport(player, "worlds-beyond")) {
                     plugin.themeItems().grantLoadoutOnEntry(player);
                 } else {
-                    player.sendMessage(Text.mm("<red>Worlds Beyond arrival is not configured."));
+                    player.sendMessage(Text.mm("<red>Worlds Beyond arrival is not available."));
                 }
             }
             case NETHERITE_SWORD -> {
-                var arrival = plugin.arrival("ruined-frontier");
-                if (arrival != null) player.teleport(arrival);
-                else player.sendMessage(Text.mm("<red>Ruined Frontier arrival is not configured."));
+                if (!plugin.safeTeleport(player, "ruined-frontier")) {
+                    player.sendMessage(Text.mm("<red>Ruined Frontier arrival is not available."));
+                }
             }
             case EMERALD -> plugin.shopGui().open(player);
             case RECOVERY_COMPASS -> player.teleport(plugin.gateArrival());

@@ -52,7 +52,7 @@ public final class GrowthGui implements Listener {
         ItemMeta meta = head.getItemMeta();
         meta.displayName(Text.mm("<gold>Evolution <tier>", "tier", String.valueOf(tier)));
         meta.lore(List.of(
-                Text.mm("<gray>Tier: <white><name>", "name", io.github.eariver.wayfarer.main.GrowthItems.tierName(tier)),
+                Text.mm("<gray>Tier: <white><name>", "name", io.github.eariver.wayfarer.main.GrowthItems.tierName(tier, false)),
                 Text.mm("<gray>Progress: <white><progress></white>", "progress", String.valueOf(tool.progress())),
                 Text.mm("<gray>Next evolution: <white><next></white>", "next", String.valueOf(plugin.plan().thresholdFor(tier + 1))),
                 Text.mm("<gray>Branch: <white><branch></white>", "branch", tool.branch().name())

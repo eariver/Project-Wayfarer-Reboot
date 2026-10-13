@@ -9,6 +9,7 @@ import io.github.eariver.wayfarer.frontier.item.ThemeItems;
 import io.github.eariver.wayfarer.frontier.launchpad.LaunchpadManager;
 import io.github.eariver.wayfarer.frontier.waystone.WaystoneManager;
 import org.bukkit.Bukkit;
+import io.github.eariver.wayfarer.common.Text;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -192,6 +193,41 @@ public final class WayfarerFrontierPlugin extends JavaPlugin {
 
     public Location arrival(String key) {
         return arrivals.get(key);
+    }
+
+    /**
+     * C2/P-6: teleport to a theme arrival, but land on safe ground. The configured arrival
+     * is a hint — the actual landing Y is the first solid block with two clear blocks above
+     * it at the target column, never inside terrain or the void.
+     */
+    public boolean safeTeleport(Player player, String key) {
+        Location hint = arrivals.get(key);
+        if (hint == null || hint.getWorld() == null) return false;
+        Location safe = safeGround(hint);
+        if (safe == null) {
+            player.sendMessage(Text.mm("<red>No safe arrival point in <theme>.", "theme", key));
+            return false;
+        }
+        player.teleport(safe);
+        return true;
+    }
+
+    private Location safeGround(Location hint) {
+        var world = hint.getWorld();
+        int x = hint.getBlockX();
+        int z = hint.getBlockZ();
+        int max = world.getMaxHeight() - 3;
+        int start = Math.min(hint.getBlockY(), max);
+        for (int y = start; y > world.getMinHeight(); y--) {
+            var ground = world.getBlockAt(x, y, z);
+            if (ground.getType().isSolid()
+                    && world.getBlockAt(x, y + 1, z).getType().isAir()
+                    && world.getBlockAt(x, y + 2, z).getType().isAir()) {
+                return new Location(world, x + 0.5, y + 1.0, z + 0.5);
+            }
+        }
+        // fall back to the configured hint (already air) rather than burying the player
+        return hint.getBlock().getType().isAir() ? hint : null;
     }
 
     /** Build the two physical gate structures in the gate world if missing. */

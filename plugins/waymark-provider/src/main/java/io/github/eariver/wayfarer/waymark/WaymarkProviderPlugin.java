@@ -222,6 +222,11 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
                     sender.sendMessage(Text.mm("<red>Unknown player.", "name", args[1]));
                     return true;
                 }
+                // P-11: self-payment is a no-op that still logs a transfer; reject it.
+                if (to.getUniqueId().equals(from.getUniqueId())) {
+                    sender.sendMessage(Text.mm("<red>You cannot pay yourself."));
+                    return true;
+                }
                 long amount;
                 try {
                     amount = Long.parseLong(args[2]);
