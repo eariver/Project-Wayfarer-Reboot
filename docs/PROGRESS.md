@@ -161,6 +161,12 @@ only used on the isolated PoC instance. No other secret was present in those fil
 Lesson recorded: all server processes must run with CWD inside `/home/eariver/wayfarer-dev/runtime`
 (`scripts/network.sh` and the console-relay pattern enforce this).
 
+The offending files remain reachable in commit d0ea68b of the pushed branch history (force-push is out of
+scope per the mission boundaries), so the RCON password exposed there is considered compromised: RCON has been
+**disabled** on the isolated instance (`enable-rcon=false`, `rcon.password=` cleared) and verification now uses the
+console FIFO (`console.fifo`) instead. The password was only ever used on this PoC instance and was never shared
+with any production environment.
+
 ## Owner playtest follow-up (2026-10-13, Main)
 
 Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (before P-10).
