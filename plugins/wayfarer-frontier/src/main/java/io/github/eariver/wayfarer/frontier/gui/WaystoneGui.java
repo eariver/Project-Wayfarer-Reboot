@@ -1,5 +1,6 @@
 package io.github.eariver.wayfarer.frontier.gui;
 
+import io.github.eariver.wayfarer.common.GuiClicks;
 import io.github.eariver.wayfarer.common.Text;
 import io.github.eariver.wayfarer.frontier.WayfarerFrontierPlugin;
 import io.github.eariver.wayfarer.frontier.waystone.WaystoneManager;
@@ -8,7 +9,9 @@ import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -79,46 +82,92 @@ public final class WaystoneGui implements Listener {
         return item;
     }
 
+    /** GUI action: teleport (11) or one of the lifecycle operations (13/15). */
+    private enum WayAction {
+        TELEPORT(11, Material.ENDER_PEARL) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player, long id) {
+                plugin.waystones().teleportTo(player, id);
+            }
+        },
+        MAINTAIN(13, Material.HEART_OF_THE_SEA) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player, long id) {
+                plugin.waystones().lifecycleOperationById(player, id, "maintain");
+            }
+        },
+        OVERWRITE(13, Material.IRON_AXE) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player, long id) {
+                plugin.waystones().lifecycleOperationById(player, id, "overwrite");
+            }
+        },
+        REVIVE(15, Material.AMETHYST_SHARD) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player, long id) {
+                plugin.waystones().lifecycleOperationById(player, id, "revive");
+            }
+        };
+
+        private final int slot;
+        private final Material material;
+
+        WayAction(int slot, Material material) {
+            this.slot = slot;
+            this.material = material;
+        }
+
+        static WayAction forSlot(int slot, Material material) {
+            for (WayAction action : values()) {
+                if (action.slot == slot && action.material == material) return action;
+            }
+            return null;
+        }
+
+        abstract void run(WayfarerFrontierPlugin plugin, Player player, long waystoneId);
+    }
+
+    /**
+     * R-14: only clicks on our own top inventory count; the action is resolved from the
+     * slot's real button, so an ENDER_PEARL or AMETHYST_SHARD in the player's own
+     * inventory cannot teleport them or revive a waystone.
+     */
     @EventHandler
     public void onClick(InventoryClickEvent event) {
         if (!(event.getInventory().getHolder() instanceof WayHolder holder)) return;
+        boolean clickedTop = event.getClickedInventory() != null
+                && event.getClickedInventory().equals(event.getView().getTopInventory());
+        if (!GuiClicks.countsAsButtonClick(clickedTop, event.getRawSlot(),
+                event.getView().getTopInventory().getSize())) {
+            event.setCancelled(true);
+            return;
+        }
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (event.getClick() != ClickType.LEFT && event.getClick() != ClickType.RIGHT) return;
+        int slot = event.getRawSlot();
         ItemStack clicked = event.getCurrentItem();
         if (clicked == null) return;
-        var manager = plugin.waystones();
-        switch (clicked.getType()) {
-            case ENDER_PEARL -> {
-                player.closeInventory();
-                manager.teleportTo(player, holder.waystoneId());
-            }
-            case HEART_OF_THE_SEA -> {
-                player.closeInventory();
-                var ws = manager.byId(holder.waystoneId());
-                if (ws != null) {
-                    var loc = new org.bukkit.Location(plugin.getServer().getWorld(ws.world()), ws.x(), ws.y(), ws.z());
-                    if (loc.getBlock() != null) manager.lifecycleOperation(player, loc.getBlock(), "maintain");
-                }
-            }
-            case IRON_AXE -> {
-                player.closeInventory();
-                var ws = manager.byId(holder.waystoneId());
-                if (ws != null) {
-                    var loc = new org.bukkit.Location(plugin.getServer().getWorld(ws.world()), ws.x(), ws.y(), ws.z());
-                    manager.lifecycleOperation(player, loc.getBlock(), "overwrite");
-                }
-            }
-            case AMETHYST_SHARD -> {
-                player.closeInventory();
-                var ws = manager.byId(holder.waystoneId());
-                if (ws != null) {
-                    var loc = new org.bukkit.Location(plugin.getServer().getWorld(ws.world()), ws.x(), ws.y(), ws.z());
-                    manager.lifecycleOperation(player, loc.getBlock(), "revive");
-                }
-            }
-            default -> {
-            }
+        WayAction action = WayAction.forSlot(slot, clicked.getType());
+        if (action == null) return;
+        // R-10: the lifecycle operations re-read the waystone by id instead of guessing
+        // the block position, so the core/anchor offset cannot break them.
+        long id = holder.waystoneId();
+        if (plugin.waystones().byId(id) == null) {
+            player.sendMessage(Text.mm("<red>That waystone no longer exists."));
+            return;
         }
+        player.closeInventory();
+        action.run(plugin, player, id);
+    }
+
+    /** Drags across the GUI must never move items in or out. */
+    @EventHandler
+    public void onDrag(InventoryDragEvent event) {
+        if (!(event.getInventory().getHolder() instanceof WayHolder)) return;
+        boolean touchesTop = event.getRawSlots().stream()
+                .anyMatch(s -> s < event.getView().getTopInventory().getSize());
+        if (touchesTop) event.setCancelled(true);
     }
 
     public static final class WayHolder implements InventoryHolder {

@@ -4,6 +4,8 @@ plugins {
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    testCompileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    testRuntimeOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     compileOnly("com.github.MilkBowl:VaultAPI:1.7") { exclude(group = "org.bukkit", module = "bukkit") }
     implementation(project(":libs:wayfarer-common"))
     implementation("com.h2database:h2:2.5.252")

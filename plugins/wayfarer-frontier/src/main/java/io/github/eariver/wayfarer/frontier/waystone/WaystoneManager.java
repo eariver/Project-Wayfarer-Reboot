@@ -72,27 +72,70 @@ public final class WaystoneManager {
 
     // ---------- structure helpers ----------
 
+    /**
+     * R-10: coordinate system. A waystone record stores the ANCHOR: the ground block at
+     * the centre of the 5x5 floor. The structure is built one block ABOVE the anchor
+     * (core at {@code y+1}, head at {@code y+2}, cap at {@code y+3}, lanterns at the
+     * floor corners' tops). Every lookup therefore resolves a clicked block by also
+     * checking the anchor position directly below the core, so GUI/discovery/lifecycle
+     * work whether the player clicks the core, the head or the floor.
+     */
+
+
+    /** True when the block belongs to a waystone structure (protected against breaking). */
     public boolean isWaystoneBlock(Block block) {
-        return block != null && findAt(block.getLocation()) != null;
+        return waystoneAt(block) != null;
     }
 
+    /** True when the block is the core (the block that opens interactions). */
     public boolean isWaystoneCore(Block block) {
-        return block != null && block.getType() == coreMaterial && findAt(block.getLocation()) != null;
+        if (block == null || block.getType() != coreMaterial) return false;
+        Waystone waystone = waystoneAt(block);
+        if (waystone == null) return false;
+        return block.getX() == waystone.x()
+                && block.getY() == waystone.y() + WaystoneGeometry.CORE_DY
+                && block.getZ() == waystone.z();
     }
 
-    public Waystone findAt(Location location) {
+    /**
+     * Resolves the waystone a block belongs to: any structure block of a nearby record.
+     * Uses the anchor-relative footprint so the whole 5x5 structure is recognised, not
+     * only the exact anchor column.
+     */
+    public Waystone waystoneAt(Block block) {
+        if (block == null) return null;
+        String world = block.getWorld().getName();
         return db.tx(c -> {
             try (PreparedStatement ps = c.prepareStatement(
-                    "SELECT * FROM waystone WHERE world=? AND x=? AND y=? AND z=?")) {
-                ps.setString(1, location.getWorld().getName());
-                ps.setInt(2, location.getBlockX());
-                ps.setInt(3, location.getBlockY());
-                ps.setInt(4, location.getBlockZ());
+                    "SELECT * FROM waystone WHERE world=? AND x BETWEEN ? AND ? AND z BETWEEN ? AND ?")) {
+                ps.setString(1, world);
+                ps.setInt(2, block.getX() - WaystoneGeometry.FOOTPRINT);
+                ps.setInt(3, block.getX() + WaystoneGeometry.FOOTPRINT);
+                ps.setInt(4, block.getZ() - WaystoneGeometry.FOOTPRINT);
+                ps.setInt(5, block.getZ() + WaystoneGeometry.FOOTPRINT);
                 try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() ? read(rs) : null;
+                    while (rs.next()) {
+                        Waystone w = read(rs);
+                        if (isStructureBlock(w, block.getX(), block.getY(), block.getZ())) return w;
+                    }
+                    return null;
                 }
             }
         });
+    }
+
+    /** True when (x,y,z) is one of the blocks the structure is built from. */
+    private static boolean isStructureBlock(Waystone w, int x, int y, int z) {
+        return WaystoneGeometry.isStructureBlock(w.x(), w.y(), w.z(), x, y, z);
+    }
+
+    /**
+     * Anchor-level lookup kept for compatibility with existing callers: a location that
+     * is either the anchor itself or the core above it resolves to the same record.
+     */
+    public Waystone findAt(Location location) {
+        if (location == null || location.getWorld() == null) return null;
+        return waystoneAt(location.getBlock());
     }
 
     private Waystone read(ResultSet rs) throws Exception {
@@ -129,18 +172,33 @@ public final class WaystoneManager {
     private record WorldReference(org.bukkit.World world) {
     }
 
+    /**
+     * R-12: removes ONLY the blocks that were placed by {@link #buildStructure}. Natural
+     * terrain and player construction inside the footprint survive, because every block
+     * is checked against the exact structure geometry before it is cleared.
+     */
     public void removeStructure(Waystone waystone) {
         var w = plugin.getServer().getWorld(waystone.world());
         if (w == null) return;
-        int x = waystone.x(), y = waystone.y(), z = waystone.z();
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dz = -2; dz <= 2; dz++) {
-                w.getBlockAt(x + dx, y, z + dz).setType(Material.AIR);
-                w.getBlockAt(x + dx, y + 1, z + dz).setType(Material.AIR);
+        int removed = 0;
+        Material floor = palette.isEmpty() ? Material.STONE_BRICKS : palette.get(0);
+        Material cap = palette.size() > 1 ? palette.get(1) : floor;
+        for (int dx = -WaystoneGeometry.FOOTPRINT; dx <= WaystoneGeometry.FOOTPRINT; dx++) {
+            for (int dz = -WaystoneGeometry.FOOTPRINT; dz <= WaystoneGeometry.FOOTPRINT; dz++) {
+                for (int dy = 0; dy <= WaystoneGeometry.CAP_DY; dy++) {
+                    int x = waystone.x() + dx;
+                    int y = waystone.y() + dy;
+                    int z = waystone.z() + dz;
+                    Block block = w.getBlockAt(x, y, z);
+                    if (WaystoneGeometry.shouldClear(waystone.x(), waystone.y(), waystone.z(), x, y, z,
+                            block.getType().name(), floor.name(), cap.name(), coreMaterial.name())) {
+                        block.setType(Material.AIR);
+                        removed++;
+                    }
+                }
             }
         }
-        w.getBlockAt(x, y + 2, z).setType(Material.AIR);
-        w.getBlockAt(x, y + 3, z).setType(Material.AIR);
+        if (removed == 0) plugin.getLogger().fine("waystone " + waystone.id() + ": nothing to remove");
     }
 
     // ---------- placement ----------
@@ -362,9 +420,21 @@ public final class WaystoneManager {
         });
     }
 
+    /**
+     * R-10: lifecycle operation identified by the waystone id (used by the GUI) so it no
+     * longer depends on reconstructing a block position from the stored coordinates.
+     */
+    public boolean lifecycleOperationById(Player player, long waystoneId, String operation) {
+        Waystone waystone = byId(waystoneId);
+        if (waystone == null) return false;
+        return lifecycleOperation(player, waystone, operation);
+    }
     /** On-site maintain (200) / overwrite (300) / revive (150) from the core. */
     public boolean lifecycleOperation(Player player, Block core, String operation) {
-        Waystone waystone = findAt(core.getLocation());
+        return lifecycleOperation(player, findAt(core.getLocation()), operation);
+    }
+
+    private boolean lifecycleOperation(Player player, Waystone waystone, String operation) {
         if (waystone == null) return false;
         long now = plugin.now();
         State state = effectiveState(waystone, now);

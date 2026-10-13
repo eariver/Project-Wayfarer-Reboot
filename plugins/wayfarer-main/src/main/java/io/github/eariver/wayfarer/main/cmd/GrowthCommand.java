@@ -83,6 +83,38 @@ public final class GrowthCommand implements CommandExecutor {
         return true;
     }
 
+    /**
+     * R-04: shared wording for a paid operation's outcome. Only states the provider or
+     * the database actually confirmed are reported as success/refund; UNKNOWN states
+     * keep the charge (or leave it ambiguous) and always carry the reconcile reference.
+     */
+    private boolean sendPaidOutcome(CommandSender sender, long cost, GrowthPaidOps.Result result,
+                                    String successMessage, String what) {
+        switch (result.state()) {
+            case PAYMENT_DECLINED -> sender.sendMessage(Text.mm(
+                    "<red><what> costs <white><cost></white> WM; you cannot afford it.",
+                    "what", what, "cost", String.valueOf(cost)));
+            case PAYMENT_FAILED -> sender.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
+            case PAYMENT_UNKNOWN -> sender.sendMessage(Text.mm(
+                    "<gold>Your payment could not be confirmed. Do not retry until an admin checks. "
+                            + "Reference: <ref>", "ref", result.reference()));
+            case COMPLETED -> sender.sendMessage(Text.mm(successMessage, "cost", String.valueOf(cost)));
+            case APPLIED_DELIVERY_FAILED -> sender.sendMessage(Text.mm(
+                    "<gold><what> applied (charged) but the item could not be handed over; "
+                            + "rejoin to receive it.", "what", what));
+            case REFUNDED -> sender.sendMessage(Text.mm(
+                    "<red>Database error; you were not charged."));
+            case REFUND_FAILED, REFUND_UNKNOWN -> sender.sendMessage(Text.mm(
+                    "<red><what> was charged but the refund could not be confirmed. "
+                            + "Keep this reference for an admin: <ref>", "what", what, "ref", result.reference()));
+            case UNKNOWN -> sender.sendMessage(Text.mm(
+                    "<gold>You were charged, but the result could not be verified. Rejoin to refresh the tool; "
+                            + "if it is unchanged, give an admin this reference: <ref>",
+                    "ref", result.reference()));
+        }
+        return true;
+    }
+
     private boolean repair(CommandSender sender) {
         if (!(sender instanceof Player player)) {
             sender.sendMessage(Text.mm("<red>Players only."));
@@ -129,31 +161,8 @@ public final class GrowthCommand implements CommandExecutor {
             }
         };
         GrowthPaidOps.Result result = GrowthPaidOps.repair(store, wallet, tool, cost, deliver, plugin.getLogger());
-        sendRepairOutcome(player, cost, result);
-        return true;
-    }
-
-    /** Shared repair outcome wording: never claim "not charged" unless the refund was confirmed. */
-    private void sendRepairOutcome(Player player, long cost, GrowthPaidOps.Result result) {
-        switch (result.state()) {
-            case PAYMENT_DECLINED -> player.sendMessage(Text.mm(
-                    "<red>Repair costs <white><cost></white> WM; you cannot afford it.",
-                    "cost", String.valueOf(cost)));
-            case PAYMENT_FAILED -> player.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
-            case COMPLETED -> player.sendMessage(Text.mm(
-                    "<green>Repaired for <white><cost></white> WM.", "cost", String.valueOf(cost)));
-            case APPLIED_DELIVERY_FAILED -> player.sendMessage(Text.mm(
-                    "<gold>Repair applied (charged) but the item could not be handed over; rejoin to receive it."));
-            case REFUNDED -> player.sendMessage(Text.mm(
-                    "<red>Database error; you were not charged."));
-            case REFUND_FAILED -> player.sendMessage(Text.mm(
-                    "<red>Repair was charged but the refund FAILED. Keep this reference for an admin: <ref>",
-                    "ref", result.reference()));
-            case UNKNOWN -> player.sendMessage(Text.mm(
-                    "<gold>You were charged, but the result could not be verified. Rejoin to refresh the tool; "
-                            + "if it is unchanged, give an admin this reference: <ref>",
-                    "ref", result.reference()));
-        }
+        return sendPaidOutcome(sender, cost, result,
+                "<green>Repaired for <white><cost></white> WM.", "Repair");
     }
 
     /**
@@ -209,37 +218,24 @@ public final class GrowthCommand implements CommandExecutor {
 
     /** Reissue wording derived from the paid-op classification; see GrowthPaidOps. */
     private boolean sendReissueOutcome(Player player, long cost, GrowthPaidOps.Result result) {
-        switch (result.state()) {
-            case PAYMENT_DECLINED -> player.sendMessage(Text.mm(
-                    "<red>Reissue costs <white><cost></white> WM; you cannot afford it.",
-                    "cost", String.valueOf(cost)));
-            case PAYMENT_FAILED -> player.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
-            case COMPLETED -> {
-                GrowthTool fresh = plugin.toolOf(player.getUniqueId());
-                int epoch = fresh != null ? fresh.epoch() : -1;
-                player.sendMessage(Text.mm(
-                        "<green>Reissued for <white><cost></white> WM (epoch <epoch>); progress, branch and upgrades kept.",
-                        "cost", String.valueOf(cost), "epoch", String.valueOf(epoch)));
-            }
-            case APPLIED_DELIVERY_FAILED -> player.sendMessage(Text.mm(
-                    "<gold>Reissue applied (charged) but the item could not be handed over; "
-                            + "rejoin to receive it."));
-            case REFUNDED -> {
-                if (result.cause() == GrowthPaidOps.Cause.NO_MATCH) {
-                    player.sendMessage(Text.mm("<red>Tool changed in the meantime; you were not charged."));
-                } else {
-                    player.sendMessage(Text.mm("<red>Database error; you were not charged."));
-                }
-            }
-            case REFUND_FAILED -> player.sendMessage(Text.mm(
-                    "<red>Reissue was charged but the refund FAILED. Keep this reference for an admin: <ref>",
-                    "ref", result.reference()));
-            case UNKNOWN -> player.sendMessage(Text.mm(
-                    "<gold>You were charged, but the result could not be verified. Rejoin to refresh the tool; "
-                            + "if it is unchanged, give an admin this reference: <ref>",
-                    "ref", result.reference()));
+        if (result.state() == GrowthPaidOps.State.COMPLETED) {
+            GrowthTool fresh = plugin.viewOf(player.getUniqueId());
+            int epoch = fresh != null ? fresh.epoch() : -1;
+            player.sendMessage(Text.mm(
+                    "<green>Reissued for <white><cost></white> WM (epoch <epoch>); progress, branch and upgrades kept.",
+                    "cost", String.valueOf(cost), "epoch", String.valueOf(epoch)));
+            return true;
         }
-        return true;
+        if (result.state() == GrowthPaidOps.State.REFUNDED) {
+            if (result.cause() == GrowthPaidOps.Cause.NO_MATCH) {
+                player.sendMessage(Text.mm("<red>Tool changed in the meantime; you were not charged."));
+            } else {
+                player.sendMessage(Text.mm("<red>Database error; you were not charged."));
+            }
+            return true;
+        }
+        return sendPaidOutcome(player, cost, result,
+                "<green>Reissued for <white><cost></white> WM.", "Reissue");
     }
 
     private boolean branch(CommandSender sender, String[] args) {
@@ -351,16 +347,9 @@ public final class GrowthCommand implements CommandExecutor {
         GrowthPaidOps.Result result = GrowthPaidOps.upgradeNetherite(
                 store, wallet, upgradeTool, cost, deliver, plugin.getLogger());
         switch (result.state()) {
-            case PAYMENT_DECLINED -> sender.sendMessage(Text.mm(
-                    "<red>The upgrade costs <white><cost></white> WM; you cannot afford it.",
-                    "cost", String.valueOf(cost)));
-            case PAYMENT_FAILED -> sender.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
             case COMPLETED -> sender.sendMessage(Text.mm(
                     "<light_purple>Netherite Upgrade unlocked for <white><cost></white> WM!",
                     "cost", String.valueOf(cost)));
-            case APPLIED_DELIVERY_FAILED -> sender.sendMessage(Text.mm(
-                    "<gold>Upgrade applied (charged) but the item could not be handed over; "
-                            + "rejoin to receive it."));
             case REFUNDED -> {
                 if (result.cause() == GrowthPaidOps.Cause.NO_MATCH) {
                     sender.sendMessage(Text.mm("<gray>Already unlocked; you were not charged."));
@@ -368,13 +357,8 @@ public final class GrowthCommand implements CommandExecutor {
                     sender.sendMessage(Text.mm("<red>Database error; you were not charged."));
                 }
             }
-            case REFUND_FAILED -> sender.sendMessage(Text.mm(
-                    "<red>The upgrade was charged but the refund FAILED. Keep this reference for an admin: <ref>",
-                    "ref", result.reference()));
-            case UNKNOWN -> sender.sendMessage(Text.mm(
-                    "<gold>You were charged, but the result could not be verified. Rejoin to refresh the tool; "
-                            + "if it is unchanged, give an admin this reference: <ref>",
-                    "ref", result.reference()));
+            default -> sendPaidOutcome(sender, cost, result,
+                    "<light_purple>Netherite Upgrade unlocked for <white><cost></white> WM!", "The upgrade");
         }
         return true;
     }

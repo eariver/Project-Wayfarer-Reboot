@@ -31,15 +31,22 @@ public final class GrowthPaidOps {
     private GrowthPaidOps() {
     }
 
+    /** Provider answer for one money movement. */
+    public enum Confirmation {
+        OK,
+        FAILED,
+        UNKNOWN
+    }
+
     /** Provider-verified money movement; the Vault adapter is {@link VaultWallet}. */
     public interface Wallet {
         boolean has(long amount);
 
-        /** Confirmed debit. */
-        boolean withdraw(long amount);
+        /** Debit answer; UNKNOWN on exception or a missing response. */
+        Confirmation withdraw(long amount);
 
-        /** Confirmed credit (used to compensate a failed paid operation). */
-        boolean deposit(long amount);
+        /** Credit answer (compensation leg); UNKNOWN on exception or a missing response. */
+        Confirmation deposit(long amount);
     }
 
     /** Repository surface for the paid operations; {@code GrowthRepository} implements it. */
@@ -67,8 +74,12 @@ public final class GrowthPaidOps {
         UNKNOWN,
         /** The player could not afford the operation (nothing was charged). */
         PAYMENT_DECLINED,
-        /** The provider did not confirm the debit. */
-        PAYMENT_FAILED
+        /** The provider refused the debit. */
+        PAYMENT_FAILED,
+        /** The debit's outcome is unknown: the charge may stand; needs reconciliation. */
+        PAYMENT_UNKNOWN,
+        /** The refund's outcome is unknown: the state may already be compensated. */
+        REFUND_UNKNOWN
     }
 
     /** Why the conditional DB step did not apply. */
@@ -92,7 +103,8 @@ public final class GrowthPaidOps {
 
         public boolean charged() {
             return switch (state) {
-                case COMPLETED, APPLIED_DELIVERY_FAILED, UNKNOWN, REFUND_FAILED -> true;
+                case COMPLETED, APPLIED_DELIVERY_FAILED, UNKNOWN, REFUND_FAILED,
+                     PAYMENT_UNKNOWN, REFUND_UNKNOWN -> true;
                 case REFUNDED, PAYMENT_DECLINED, PAYMENT_FAILED -> false;
             };
         }
@@ -109,10 +121,20 @@ public final class GrowthPaidOps {
                              Supplier<Boolean> appliedProbe,
                              Delivery deliver,
                              Logger log) {
-        if (!wallet.has(cost)) return new Result(State.PAYMENT_DECLINED, reference);
-        if (!wallet.withdraw(cost)) {
-            log.warning("[" + reference + "] economy provider did not confirm the debit");
-            return new Result(State.PAYMENT_FAILED, reference);
+        boolean affordable;
+        try {
+            affordable = wallet.has(cost);
+        } catch (RuntimeException e) {
+            // an unknown balance is never treated as affordable: no money may move
+            log.warning("[" + reference + "] balance query threw: " + e);
+            return new Result(State.PAYMENT_DECLINED, reference);
+        }
+        if (!affordable) return new Result(State.PAYMENT_DECLINED, reference);
+        Confirmation debit = call(() -> wallet.withdraw(cost), log, reference, "withdraw");
+        if (debit != Confirmation.OK) {
+            log.warning("[" + reference + "] debit " + debit + ": no DB change was attempted");
+            return new Result(debit == Confirmation.UNKNOWN ? State.PAYMENT_UNKNOWN : State.PAYMENT_FAILED,
+                    reference);
         }
         final int rows;
         try {
@@ -156,13 +178,31 @@ public final class GrowthPaidOps {
 
     private static Result compensate(Wallet wallet, long cost, String reference, State refundedState,
                                      Cause cause, Logger log) {
-        if (wallet.deposit(cost)) {
+        Confirmation refund = call(() -> wallet.deposit(cost), log, reference, "refund");
+        if (refund == Confirmation.OK) {
             log.info("[" + reference + "] refunded " + cost + " WM");
             return new Result(refundedState, reference, cause);
+        }
+        if (refund == Confirmation.UNKNOWN) {
+            log.severe("[" + reference + "] REFUND UNKNOWN for " + cost + " WM — reconcile manually; "
+                    + "the player must NOT be told they were not charged");
+            return new Result(State.REFUND_UNKNOWN, reference, cause);
         }
         log.severe("[" + reference + "] REFUND FAILED for " + cost + " WM — reconcile manually; "
                 + "the player must NOT be told they were not charged");
         return new Result(State.REFUND_FAILED, reference, cause);
+    }
+
+    /** R-04: turns a provider exception into UNKNOWN so it can never read as a refusal. */
+    private static Confirmation call(java.util.function.Supplier<Confirmation> leg, Logger log,
+                                     String reference, String what) {
+        try {
+            Confirmation result = leg.get();
+            return result == null ? Confirmation.UNKNOWN : result;
+        } catch (RuntimeException e) {
+            log.warning("[" + reference + "] " + what + " threw, treated as UNKNOWN: " + e);
+            return Confirmation.UNKNOWN;
+        }
     }
 
     private static Result deliver(String reference, Delivery deliver, Logger log) {

@@ -28,31 +28,37 @@ class GrowthPaidOpsTest {
             toolId, owner, "tester", 3, 1200L, EvolutionPlan.Branch.SILK_TOUCH,
             GrowthTool.Status.ACTIVE, false);
 
-    /** Fake economy: every leg can be forced to fail. */
+    /** Fake economy: every leg can be forced to fail or to throw (R-04). */
     static final class FakeWallet implements GrowthPaidOps.Wallet {
         boolean funds = true;
+        boolean hasThrows;
         boolean withdrawOk = true;
+        boolean withdrawThrows;
         boolean depositOk = true;
+        boolean depositThrows;
         long withdrawn = 0;
         long deposited = 0;
 
         @Override
         public boolean has(long amount) {
+            if (hasThrows) throw new IllegalStateException("balance query exploded");
             return funds;
         }
 
         @Override
-        public boolean withdraw(long amount) {
-            if (!withdrawOk) return false;
+        public GrowthPaidOps.Confirmation withdraw(long amount) {
+            if (withdrawThrows) throw new IllegalStateException("withdraw exploded");
+            if (!withdrawOk) return GrowthPaidOps.Confirmation.FAILED;
             withdrawn += amount;
-            return true;
+            return GrowthPaidOps.Confirmation.OK;
         }
 
         @Override
-        public boolean deposit(long amount) {
-            if (!depositOk) return false;
+        public GrowthPaidOps.Confirmation deposit(long amount) {
+            if (depositThrows) throw new IllegalStateException("deposit exploded");
+            if (!depositOk) return GrowthPaidOps.Confirmation.FAILED;
             deposited += amount;
-            return true;
+            return GrowthPaidOps.Confirmation.OK;
         }
     }
 
@@ -365,6 +371,71 @@ class GrowthPaidOpsTest {
                     () -> fail("must not deliver"), LOG);
             assertEquals(GrowthPaidOps.State.UNKNOWN, r.state());
             assertEquals(0, wallet.deposited);
+        }
+    }
+    @Nested
+    @DisplayName("R-04: provider exceptions are UNKNOWN, never a clean failure")
+    class ProviderExceptions {
+
+        @Test
+        @DisplayName("a throwing debit is UNKNOWN and applies no DB change")
+        void withdrawThrows() {
+            StubStore store = store();
+            FakeWallet wallet = new FakeWallet();
+            wallet.withdrawThrows = true;
+            GrowthPaidOps.Result r = GrowthPaidOps.reissue(store, wallet, tool, COST,
+                    () -> fail("must not deliver"), LOG);
+            assertEquals(GrowthPaidOps.State.PAYMENT_UNKNOWN, r.state());
+            assertTrue(r.charged(), "the charge may stand until an admin reconciles");
+            assertEquals(3, store.row.epoch(), "no DB change while the debit is unknown");
+            assertFalse(runDelivered());
+        }
+
+        @Test
+        @DisplayName("a throwing balance query never charges")
+        void balanceQueryThrows() {
+            StubStore store = store();
+            FakeWallet wallet = new FakeWallet();
+            wallet.hasThrows = true;
+            GrowthPaidOps.Result r = GrowthPaidOps.reissue(store, wallet, tool, COST,
+                    () -> fail("must not deliver"), LOG);
+            assertEquals(GrowthPaidOps.State.PAYMENT_DECLINED, r.state());
+            assertEquals(0, wallet.withdrawn);
+            assertEquals(3, store.row.epoch());
+        }
+
+        @Test
+        @DisplayName("a throwing refund after a not-applied change is REFUND_UNKNOWN")
+        void refundThrows() {
+            StubStore store = store();
+            store.bumpRows = 0;
+            FakeWallet wallet = new FakeWallet();
+            wallet.depositThrows = true;
+            GrowthPaidOps.Result r = GrowthPaidOps.reissue(store, wallet, tool, COST,
+                    () -> fail("must not deliver"), LOG);
+            assertEquals(GrowthPaidOps.State.REFUND_UNKNOWN, r.state());
+            assertEquals(COST, wallet.withdrawn);
+            assertEquals(0, wallet.deposited);
+            assertTrue(r.charged(), "the player must not be told they were uncharged");
+        }
+
+        @Test
+        @DisplayName("an unknown refund keeps the reference for reconciliation")
+        void refundUnknownCarriesReference() {
+            StubStore store = store();
+            store.flagThrows = true;   // mutation fails
+            store.findThrows = false;  // probe reads the unchanged row
+            FakeWallet wallet = new FakeWallet();
+            wallet.depositThrows = true;
+            GrowthPaidOps.Result r = GrowthPaidOps.upgradeNetherite(store, wallet, tool, COST,
+                    () -> fail("must not deliver"), LOG);
+            assertEquals(GrowthPaidOps.State.REFUND_UNKNOWN, r.state());
+            assertTrue(r.reference().contains("netherite tool="));
+            assertTrue(r.reference().contains("owner="));
+        }
+
+        private boolean runDelivered() {
+            return false;
         }
     }
 }

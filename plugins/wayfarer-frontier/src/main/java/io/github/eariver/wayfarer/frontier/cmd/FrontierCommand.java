@@ -34,7 +34,6 @@ public final class FrontierCommand implements CommandExecutor {
         }
         return null;
     }
-
     public FrontierCommand(WayfarerFrontierPlugin plugin) {
         this.plugin = plugin;
         this.items = plugin.themeItems();
@@ -83,12 +82,27 @@ public final class FrontierCommand implements CommandExecutor {
             return true;
         }
         if (sub.equals("gate") && args.length >= 2) {
+            // R-05: moving ANOTHER player is an administrative action. Without the
+            // permission any player could drag anyone (including ops) to the gate.
+            if (!FrontierGate.mayTeleportOther(sender.hasPermission("wayfarer.frontier.admin"))) {
+                sender.sendMessage(Text.mm("<red>You may not do that."));
+                return true;
+            }
             Player target = plugin.getServer().getPlayerExact(args[1]);
             if (target == null) {
                 sender.sendMessage(Text.mm("<red>Player offline."));
                 return true;
             }
-            target.teleport(plugin.gateArrival());
+            if (target.equals(sender)) {
+                // self-teleport stays available to everyone via the navigation GUI
+                sender.sendMessage(Text.mm("<red>Use /wayfarer-frontier open to travel yourself."));
+                return true;
+            }
+            boolean moved = target.teleport(plugin.gateArrival());
+            if (!moved) {
+                sender.sendMessage(Text.mm("<red>Teleport failed; <name> was not moved.", "name", target.getName()));
+                return true;
+            }
             sender.sendMessage(Text.mm("<green>Sent <name> to the Frontier gate.", "name", target.getName()));
             return true;
         }

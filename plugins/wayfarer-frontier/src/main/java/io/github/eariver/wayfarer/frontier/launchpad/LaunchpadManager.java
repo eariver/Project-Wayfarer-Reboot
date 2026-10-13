@@ -123,15 +123,14 @@ public final class LaunchpadManager {
         if (usesLeft == null || usesLeft <= 0) return;
         Vector direction = player.getLocation().getDirection().setY(0).normalize();
         if (direction.lengthSquared() < 0.01) {
-            direction = new Vector(0, 0, 1).rotateAroundY(Math.toRadians(pad.getY() - pad.getY() + player.getLocation().getYaw()));
+            // looking straight up/down: launch along the pad's stored facing instead
+            direction = new Vector(0, 0, 1).rotateAroundY(Math.toRadians(yawFor(pad)));
         }
         Vector velocity = direction.multiply(horizontal).setY(vertical);
         player.setVelocity(velocity);
-        if (autoElytra && player.getInventory().getChestplate() == null) {
-            ItemStack elytra = plugin.themeItems().build(io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType.ELYTRA, player.getUniqueId(), "worlds_beyond", 0);
-            var left = player.getInventory().addItem(elytra);
-            left.values().forEach(i -> player.getWorld().dropItemNaturally(player.getLocation(), i));
-        }
+        // R-13: reuse the player's own bound elytra instead of minting a new one
+        // every time the chestplate slot is empty.
+        if (autoElytra) deployElytra(player);
         int remaining = usesLeft - 1;
         long now = plugin.now();
         db.tx(c -> {
@@ -152,6 +151,85 @@ public final class LaunchpadManager {
         if (remaining <= 0) {
             removeByBlock(pad, player.getUniqueId(), false);
         }
+    }
+
+    /** Stored launch yaw for the pad (falls back to 0). */
+    private float yawFor(Block pad) {
+        Float yaw = db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT yaw FROM launchpad WHERE world=? AND x=? AND y=? AND z=?")) {
+                ps.setString(1, pad.getWorld().getName());
+                ps.setInt(2, pad.getX());
+                ps.setInt(3, pad.getY());
+                ps.setInt(4, pad.getZ());
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? rs.getFloat(1) : null;
+                }
+            }
+        });
+        return yaw == null ? 0f : yaw;
+    }
+
+    /**
+     * R-13: the pure decision for auto-deploy. Repeated launches must never mint a second
+     * elytra: an equipped bound elytra is reused, otherwise the one in the inventory is
+     * equipped, and only a player with no bound elytra at all receives a new one.
+     */
+    static final class ElytraDecision {
+        private ElytraDecision() {
+        }
+
+        enum Action { ALREADY_EQUIPPED, EQUIP_FROM_INVENTORY, MINT }
+
+        static Action decide(boolean boundElytraEquipped, boolean boundElytraInInventory) {
+            if (boundElytraEquipped) return Action.ALREADY_EQUIPPED;
+            if (boundElytraInInventory) return Action.EQUIP_FROM_INVENTORY;
+            return Action.MINT;
+        }
+    }
+
+    /**
+     * R-13: auto-deploy gliding without issuing duplicate elytra. The player's own bound
+     * elytra is reused wherever it is (equipped or in a slot), the chestplate slot is
+     * filled with it, and a new one is only minted when the player has none at all.
+     */
+    private void deployElytra(Player player) {
+        ItemStack owned = plugin.themeItems().findInInventory(
+                player, io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType.ELYTRA);
+        switch (ElytraDecision.decide(boundElytraEquipped(player), owned != null)) {
+            case ALREADY_EQUIPPED -> {
+                // already gliding: nothing to give
+            }
+            case EQUIP_FROM_INVENTORY -> {
+                player.getInventory().setChestplate(owned);
+                player.updateInventory();
+            }
+            case MINT -> mintElytra(player);
+        }
+    }
+
+    private void mintElytra(Player player) {
+        ItemStack elytra = plugin.themeItems().build(
+                io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType.ELYTRA,
+                player.getUniqueId(), "worlds_beyond", 0);
+        plugin.themeItems().stamp(elytra,
+                io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType.ELYTRA,
+                player.getUniqueId(), "worlds_beyond", 0);
+        var left = player.getInventory().addItem(elytra);
+        if (!left.isEmpty()) {
+            // inventory full: equip directly instead of dropping a fresh elytra on the floor
+            player.getInventory().setChestplate(elytra);
+            player.updateInventory();
+        }
+    }
+
+    private boolean boundElytraEquipped(Player player) {
+        ItemStack chest = player.getInventory().getChestplate();
+        if (chest == null || chest.getType() != Material.ELYTRA) return false;
+        var id = plugin.themeItems().identify(chest);
+        return id != null
+                && id.type() == io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType.ELYTRA
+                && id.owner().equals(player.getUniqueId().toString());
     }
 
     public void removeByBlock(Block block, java.util.UUID actor, boolean manual) {

@@ -244,6 +244,58 @@ growth-pickaxe failure paths, Waymark transfer integrity. Unit tests: 50 passed 
 - Interactive UI flows (GUI, nav items, waystones/launchpads) still need the Owner client.
 - Frontier live gameplay unchanged (jar not modified this batch).
 
+## R-01..R-15 residual audit & corrective batch (2026-10-14, HEAD 0e71d8a)
+
+Independent code review findings fixed on `work/playable-alpha` plus an extra audit pass.
+Unit tests: **90 passed / 0 failed** (`./gradlew build` BUILD SUCCESSFUL).
+
+### Priority 0 — Data integrity / currency / security
+
+| ID | Sev | Status | Root cause | Fix | Tests |
+|---|---|---|---|---|---|
+| R-01 | Critical | FIXED | after a refused deposit the code called `provider.withdraw(to, amount)` — it debited the RECIPIENT instead of refunding the sender (asset integrity bug); the old test asserted this wrong behaviour | `WaymarkTransfer` now compensates the SENDER (`deposit(from, …)`) and only when the credit was certainly refused; an unknown credit outcome performs no compensation at all | `WaymarkTransferTest` 13 cases incl. the A=1000/B=500 → 250 transfer with total conservation asserts |
+| R-02 | Critical | FIXED | `Db.tx()` called `connection()` outside its try, so a connection failure leaked the ReentrantLock; and a nested `tx()` COMMITTED the enclosing transaction (WaymarkLedger read the public `balance()` inside its tx) | `Db` keeps a per-thread depth: only the OUTERMOST frame owns autoCommit/commit/rollback; `connection()` moved inside the try; WaymarkLedger uses the connection-aware balance | `DbTransactionTest` 4 cases (nested commit, nested rollback, depth flag, lock release on a file-as-parent path) |
+| R-03 | Critical | FIXED | `registerBreak` added 1 to the last-persisted cached progress, so N breaks between checkpoints overwrote each other (only +1 counted) | new `ProgressBuffer` domain overlay + `accumulateBreak()`/`latestProgress()`/`viewOf()` in the plugin; failed checkpoints keep the pending value; quit/evolution/BROKEN transitions preserve it | `ProgressBufferTest` 7 cases incl. 100 consecutive breaks = +100 |
+| R-04 | High | FIXED | provider exceptions were indistinguishable from a refusal, so a throwing leg was reported as a clean failure/“not charged” | tri-state `Confirmation{OK,FAILED,UNKNOWN}` in `GrowthPaidOps`/`VaultWallet`/`WaymarkTransfer`; new PAYMENT_UNKNOWN/REFUND_UNKNOWN states; reconcile references carry op + player uuid + cost | `GrowthPaidOpsTest` 17 cases (4 new exception cases) |
+| R-05 | High | FIXED | `/wayfarer-frontier gate <player>` teleported any player for anyone | `wayfarer.frontier.admin` required (self-travel via the nav GUI documented); `FrontierGate` helper | `FrontierGateTest` 3 cases |
+
+### Priority 1 — Main / Frontier gameplay
+
+| ID | Sev | Status | Root cause | Fix | Tests |
+|---|---|---|---|---|---|
+| R-06 | High | FIXED | right-click opened the GUI only for BROKEN | ACTIVE opens the status GUI too; stale-epoch/foreign/revoked items are rejected; vanilla interaction untouched for ACTIVE | code + live startup verification |
+| R-07 | Medium | FIXED | GUI mapped tier 4+ → NETHERITE and hardcoded `netheriteUpgraded=false` | uses `GrowthItems.materialFor`/`tierName` (the item's source of truth) | `GrowthItemsTest` 4 cases |
+| R-08 | High | FIXED | `onBreak` branch `if (tool == null \|\| status != BROKEN) { if (status == BROKEN) cancel }` could never fire | single explicit rule: BROKEN/REVOKED/foreign/stale → no mining (BROKEN cancels the event); only the owner's current ACTIVE tool registers progress | code + unit-level reasoning documented |
+| R-09 | Medium | FIXED | GUI/status read the DB directly, so pending progress rolled back on screen | `viewOf()` (buffered overlay first) is the single source of truth for GUI, status, lore and evolution | `ProgressBufferTest` |
+| R-10 | High | FIXED | the core is built at `y+1` but `findAt` queried the clicked block's own y → the core never resolved, GUI/discovery/lifecycle were unreachable | `WaystoneGeometry` (anchor vs core offset); `waystoneAt()` resolves any structure block; `lifecycleOperationById` for the GUI | `WaystoneGeometryTest` 7 cases |
+| R-11 | High | FIXED | teleport landed on `y+1` = inside the core block | `safeArrival()` scans outward for solid ground + 2 air, skipping the structure's own column; missing world fails instead of voiding | geometry test + code |
+| R-12 | High | FIXED | `removeStructure` cleared 11x11x2 blocks to AIR unconditionally, and `isWaystoneBlock` matched only the anchor | removal clears only blocks that still hold their structure material (player builds and replaced terrain survive); protection covers the whole 5x5 footprint | `WaystoneGeometryTest` |
+| R-13 | Medium | FIXED | every launch with an empty chestplate minted a NEW elytra (repeatable duplication) | `ElytraDecision`: reuse equipped → equip from inventory → mint once | `ElytraDecisionTest` 4 cases |
+| R-14 | High | FIXED | all 5 GUIs acted on `getCurrentItem()` without checking the clicked inventory | shared `GuiClicks.countsAsButtonClick` + slot-resolved buttons in GrowthGui, ShopGui (main), FrontierNavGui, WaystoneGui, ShopGui (frontier); drags cancelled | `GuiClicksTest` 3 cases |
+| R-15 | Medium | FIXED | sell removed the item before an unverified credit; buy/shop refunds were unconfirmed | sell credits first and only then removes the item (compensating on failure); every refund leg is confirmed | code |
+
+### Additional audit findings (fixed)
+
+- A-01/A-02/A-03: `FrontierListener` logged every move and every interact (`[gate-debug]`, `[interact-debug]`, `[frontier-debug]`) and ran a launchpad DB query on every move event; pure teleport events were handled twice. Removed the debug logging, the gate/launchpad check now runs only when the block BELOW the player changes, and `PlayerTeleportEvent` is handled once.
+- Gate arrival now lands via `safeTeleport` (same safe-ground rule as the theme teleports) instead of the raw configured arrival.
+- Launchpad yaw fallback used `pad.getY() - pad.getY()` (always 0); it now reads the pad's stored `yaw`.
+
+### Runtime verification (isolated PoC, console FIFO; RCON stays disabled)
+
+- main (03:41) + frontier (02:48) restarted on the new jars; `Wayfarer_Main ready`, `Wayfarer_Frontier ready`, mcMMO 2.3.003-SNAPSHOT, `/shop` delegated to EconomyShopGUI, 0 mcMMO API exceptions.
+- With the new jar: `/wayfarer-main status` → tier=Stone progress=0/100 epoch=1 ACTIVE; `/waymark pay <self>` rejected (P-11); `/waymark balance` 284 WM (economy untouched).
+- R-03 live: the bot's status went 0/100 → 3/100 across several digs and 3/100 → 4/100 across further digs (the old code would have capped the batch at +1).
+- Data integrity (verified through H2 with the servers stopped): `kanpyo_himono progress=1219 ACTIVE`, `wf_admin epoch=2 progress=1200 SILK_TOUCH ACTIVE`, the revoked history row and both test accounts are all present.
+
+### NOT VERIFIED (Owner client required)
+
+- GUI open/click behaviour in-game (R-06, R-14), waystone core click, GUI teleport, structure protection and cleanup in-game (R-10..R-12), launchpad elytra (R-13), frontier shop (R-15), gate permission (R-05). The protocol bot cannot deliver use-item-on/click packets through ViaVersion to 1.21.11, and its chat commands stopped being honoured after the resource-pack gate during this session.
+
+### Residual risks
+
+- **EXTERNAL BLOCKER**: the storage under `/home/eariver/wayfarer-dev/runtime` intermittently returned ENOENT; H2 recreated `growth.db.mv.db` from scratch twice while the server was running. No player progress was lost from the code changes and the rows above are intact, but the PoC runtime should be moved to stable storage. Verified snapshots + the recovery procedure are in `runtime/backups/r-residual-batch/`.
+- Exactly-once across the economy/DB boundary is still not possible; UNKNOWN states carry reconcile references.
+
 ## Owner playtest follow-up (2026-10-13, Main)
 
 Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (before P-10).

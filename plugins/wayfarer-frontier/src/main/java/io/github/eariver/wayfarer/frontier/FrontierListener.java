@@ -36,12 +36,10 @@ public final class FrontierListener implements Listener {
 
     public FrontierListener(WayfarerFrontierPlugin plugin) {
         this.plugin = plugin;
-        plugin.getLogger().info("[frontier-debug] listener constructed");
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
-        plugin.getLogger().info("[frontier-debug] onJoin " + event.getPlayer().getName());
         Player player = event.getPlayer();
         if (plugin.worldsBeyond().contains(player.getWorld().getName())) {
             plugin.themeItems().grantLoadoutOnEntry(player);
@@ -61,9 +59,6 @@ public final class FrontierListener implements Listener {
 
     @EventHandler
     public void onInteract(PlayerInteractEvent event) {
-        plugin.getLogger().info("[interact-debug] " + event.getPlayer().getName() + " action=" + event.getAction()
-                + " hand=" + event.getHand() + " item=" + event.getItem()
-                + " block=" + event.getClickedBlock() + " cancelled=" + event.isCancelled());
         if (event.getHand() != EquipmentSlot.HAND) return;
         Player player = event.getPlayer();
         ItemStack item = event.getItem();
@@ -133,24 +128,27 @@ public final class FrontierListener implements Listener {
         handleGate(event.getTo(), event.getPlayer());
     }
 
+    /**
+     * A-02/a-03: a gate/launchpad only needs checking when the block UNDER the player
+     * changes, so a pure rotation or a same-block move does zero DB work. Pure teleport
+     * events are handled by {@link #onTeleport} instead of twice.
+     */
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
-        if (event.getTo() != null && event.getFrom().getBlockX() == event.getTo().getBlockX()
-                && event.getFrom().getBlockY() == event.getTo().getBlockY()
-                && event.getFrom().getBlockZ() == event.getTo().getBlockZ()
-                && !event.getClass().getSimpleName().contains("Teleport")) {
-            return; // pure rotation: nothing to do
+        Location to = event.getTo();
+        if (to == null) return;
+        Location from = event.getFrom();
+        if (from.getBlockX() == to.getBlockX()
+                && from.getBlockY() == to.getBlockY()
+                && from.getBlockZ() == to.getBlockZ()) {
+            return; // same block (rotation or micro-move): nothing to re-check
         }
-        handleGate(event.getTo(), event.getPlayer());
+        if (event instanceof org.bukkit.event.player.PlayerTeleportEvent) return; // handled by onTeleport
+        handleGate(to, event.getPlayer());
     }
 
     private void handleGate(Location to, Player player) {
-        if (to == null) return;
-        plugin.getLogger().info("[gate-debug] MOVE " + player.getName()
-                + " world=" + to.getWorld().getName()
-                + " to=" + to.getBlockX() + "," + to.getBlockY() + "," + to.getBlockZ()
-                + " gateWorldMatches=" + plugin.gateWorld().equals(to.getWorld().getName())
-                + " plateGate=" + plugin.gatePlateGate(to.clone().subtract(0, 1, 0).getBlock()));
+        if (to == null || to.getWorld() == null) return;
         Block below = to.clone().subtract(0, 1, 0).getBlock();
         if (plugin.launchpads().isLaunchpad(below)) {
             long now = System.currentTimeMillis();
@@ -164,11 +162,13 @@ public final class FrontierListener implements Listener {
         if (plugin.gateWorld().equals(to.getWorld().getName())) {
             String gate = plugin.gatePlateGate(below);
             if (gate != null) {
-                Location arrival = plugin.arrival(gate);
-                if (arrival != null) {
-                    player.teleport(arrival);
-                    player.playSound(arrival, Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
+                // land on safe ground like the theme teleports do (never buried in terrain)
+                if (plugin.safeTeleport(player, gate)) {
+                    Location arrival = plugin.arrival(gate);
+                    if (arrival != null) player.playSound(arrival, Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
                     player.sendMessage(Text.mm("<green>Traveling to the " + gate + " gate."));
+                } else {
+                    player.sendMessage(Text.mm("<red>The " + gate + " gate is not available."));
                 }
             }
         }

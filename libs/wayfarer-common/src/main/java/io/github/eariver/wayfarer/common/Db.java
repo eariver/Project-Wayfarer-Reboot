@@ -12,6 +12,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * (for example the Waymark ledger shared by Main and Frontier) can open the same
  * database file concurrently. Each Db instance is single-connection and guarded
  * by a lock; cross-process writes serialise at the H2 lock level.
+ *
+ * <p>Transactions are re-entrant per thread: only the OUTERMOST {@link #tx} owns
+ * autoCommit/commit/rollback, so a nested call can never commit half of an enclosing
+ * transaction (R-02). The lock is always released, including when opening the
+ * connection fails.
  */
 public final class Db {
 
@@ -28,6 +33,12 @@ public final class Db {
     private final File file;
     private final boolean autoServer;
     private final ReentrantLock lock = new ReentrantLock(true);
+    private final ThreadLocal<Integer> depth = new ThreadLocal<>() {
+        @Override
+        protected Integer initialValue() {
+            return 0;
+        }
+    };
     private Connection connection;
 
     public Db(File file, boolean autoServer) {
@@ -57,25 +68,45 @@ public final class Db {
         }
     }
 
-    /** Run a unit of work inside a transaction. */
+    /** True when the calling thread is already inside a {@link #tx} unit of work. */
+    public boolean inTransaction() {
+        return depth.get() > 0;
+    }
+
+    /**
+     * Run a unit of work inside a transaction. Re-entrant on the same thread: a nested
+     * call joins the enclosing transaction and lets the outermost frame commit or roll
+     * back, so no intermediate commit can leak partial work.
+     */
     public <T> T tx(SqlFunction<T> body) {
         lock.lock();
-        Connection c = connection();
+        boolean outermost = depth.get() == 0;
         try {
+            depth.set(depth.get() + 1);
+            Connection c = connection(); // inside try: the lock is released on failure
             boolean prev = c.getAutoCommit();
-            c.setAutoCommit(false);
+            if (outermost) c.setAutoCommit(false);
             try {
                 T result = body.apply(c);
-                c.commit();
+                if (outermost) c.commit();
                 return result;
             } catch (Throwable t) {
-                try {
-                    c.rollback();
-                } catch (SQLException ignored) {
+                if (outermost) {
+                    try {
+                        c.rollback();
+                    } catch (SQLException ignored) {
+                    }
                 }
                 throw t instanceof RuntimeException r ? r : new RuntimeException(t);
             } finally {
-                c.setAutoCommit(prev);
+                if (outermost) {
+                    try {
+                        c.setAutoCommit(prev);
+                    } catch (SQLException ignored) {
+                    }
+                }
+                depth.set(depth.get() - 1);
+                if (depth.get() == 0) depth.remove();
             }
         } catch (SQLException e) {
             throw new IllegalStateException(e);

@@ -4,6 +4,7 @@ import io.github.eariver.wayfarer.common.Text;
 import io.github.eariver.wayfarer.main.cmd.GrowthCommand;
 import io.github.eariver.wayfarer.main.domain.EvolutionPlan;
 import io.github.eariver.wayfarer.main.domain.GrowthTool;
+import io.github.eariver.wayfarer.main.domain.ProgressBuffer;
 import io.github.eariver.wayfarer.main.domain.RepairPricing;
 import io.github.eariver.wayfarer.main.gui.GrowthGui;
 import io.github.eariver.wayfarer.main.gui.ShopGui;
@@ -30,8 +31,8 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -58,10 +59,9 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
     private GrowthGui growthGui;
     private ShopGui shopGui;
 
-    /** In-memory progress overlay; flushed by the checkpoint task. */
-    private final Map<UUID, Long> pendingProgress = new HashMap<>();
+    /** In-memory progress overlay; flushed by the checkpoint task (R-03). */
+    private final ProgressBuffer progressBuffer = new ProgressBuffer();
     private final Map<UUID, GrowthTool> toolCache = new HashMap<>();
-    private final Set<UUID> dirty = new HashSet<>();
     private final Set<UUID> reissueLocks = new HashSet<>();
 
     @Override
@@ -164,12 +164,8 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
 
     /** Live progress for a player: buffered overlay first, then DB cache. */
     public long progressOf(UUID owner) {
-        synchronized (pendingProgress) {
-            Long buffered = pendingProgress.get(owner);
-            if (buffered != null) return buffered;
-        }
         GrowthTool cached = toolCache.get(owner);
-        return cached != null ? cached.progress() : 0;
+        return progressBuffer.latest(owner, cached != null ? cached.progress() : 0);
     }
 
     public GrowthTool toolOf(UUID owner) {
@@ -178,6 +174,37 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         GrowthTool active = repository.findActive(owner).orElse(null);
         if (active != null) toolCache.put(owner, active);
         return active;
+    }
+
+    /**
+     * R-03/R-09: the authoritative live view of a player's tool. Progress comes from the
+     * buffered overlay when a checkpoint is still pending, otherwise from the cached/DB
+     * row. GUI, status, item lore and evolution all read this, so a pending checkpoint
+     * can never make the displayed progress roll backwards.
+     */
+    public GrowthTool viewOf(UUID owner) {
+        GrowthTool base = toolOf(owner);
+        if (base == null) return null;
+        Long pending = progressBuffer.pendingOf(owner);
+        if (pending == null || pending == base.progress()) return base;
+        return base.withProgress(pending);
+    }
+
+    /** Latest progress value including any not-yet-checkpointed breaks. */
+    public long latestProgress(UUID owner) {
+        GrowthTool cached = toolCache.get(owner);
+        return progressBuffer.latest(owner, cached != null ? cached.progress() : 0);
+    }
+
+    /** R-03: accumulate one break on top of the newest value (buffered first). */
+    public long accumulateBreak(UUID owner) {
+        GrowthTool cached = toolCache.get(owner);
+        return progressBuffer.addBreak(owner, cached != null ? cached.progress() : 0);
+    }
+
+    /** Called after a checkpoint was persisted, so the overlay can be dropped. */
+    public void markChecked(UUID owner) {
+        progressBuffer.clearOne(owner);
     }
 
     /**
@@ -193,18 +220,21 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         if (tool.status() == GrowthTool.Status.BROKEN) return;
         if (!progressWorlds.contains(player.getWorld().getName())) return;
 
-        int before = tierFor(tool.progress());
-        long next = tool.progress() + 1;
-        pendingProgress.put(player.getUniqueId(), next);
-        dirty.add(player.getUniqueId());
+        // R-03: add on top of the NEWEST value (buffered pending progress included), not the
+        // last checkpointed row, otherwise breaks between checkpoints overwrite each other.
+        long previous = latestProgress(player.getUniqueId());
+        long next = accumulateBreak(player.getUniqueId());
+        if (next != previous + 1) {
+            throw new IllegalStateException("progress accumulation expected " + (previous + 1) + " but got " + next);
+        }
+        int before = tierFor(previous);
         int after = tierFor(next);
         if (after > before) {
             // evolution: persist immediately (material/enchants change) and rebuild the item
             GrowthTool evolved = tool.withProgress(next);
             repository.update(evolved);
             toolCache.put(player.getUniqueId(), evolved);
-            pendingProgress.remove(player.getUniqueId());
-            dirty.remove(player.getUniqueId());
+            markChecked(player.getUniqueId());
             ItemStack item = Items.rebuildPreservingDamage(this, evolved, held);
             player.getInventory().setItemInMainHand(item);
             player.sendMessage(Text.mm("<gold>Your Pickaxe of Growth evolved to <white><tier></white>!",
@@ -222,51 +252,45 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
     }
 
     private void flushDirty() {
-        synchronized (pendingProgress) {
-            if (dirty.isEmpty()) return;
-            for (UUID owner : new HashSet<>(dirty)) {
-                Long progress = pendingProgress.get(owner);
-                if (progress == null) {
-                    dirty.remove(owner);
-                    continue;
-                }
-                GrowthTool tool = toolCache.get(owner);
-                if (tool == null || tool.progress() == progress) {
-                    dirty.remove(owner);
-                    continue;
-                }
-                GrowthTool updated = tool.withProgress(progress);
-                try {
-                    repository.update(updated);
-                    toolCache.put(owner, updated);
-                } catch (Exception e) {
-                    getLogger().log(Level.WARNING, "progress checkpoint failed for " + owner, e);
-                    continue;
-                }
-                pendingProgress.remove(owner);
-                dirty.remove(owner);
+        for (UUID owner : progressBuffer.dirtyOwners()) {
+            Long progress = progressBuffer.pendingOf(owner);
+            if (progress == null) {
+                markChecked(owner);
+                continue;
             }
+            GrowthTool tool = toolCache.get(owner);
+            if (tool == null || tool.progress() == progress) {
+                markChecked(owner);
+                continue;
+            }
+            GrowthTool updated = tool.withProgress(progress);
+            try {
+                repository.update(updated);
+                toolCache.put(owner, updated);
+            } catch (Exception e) {
+                // R-03: a failed checkpoint keeps the pending value; the next tick retries
+                getLogger().log(Level.WARNING, "progress checkpoint failed for " + owner, e);
+                continue;
+            }
+            markChecked(owner);
         }
     }
 
     private void flushAll() {
-        synchronized (pendingProgress) {
-            for (Map.Entry<UUID, Long> e : pendingProgress.entrySet()) {
-                GrowthTool tool = toolCache.get(e.getKey());
-                if (tool != null && tool.progress() != e.getValue()) {
-                    tool = tool.withProgress(e.getValue());
-                    repository.update(tool);
-                    toolCache.put(e.getKey(), tool);
-                }
+        for (Map.Entry<UUID, Long> e : progressBuffer.pendingOfAll().entrySet()) {
+            GrowthTool tool = toolCache.get(e.getKey());
+            if (tool != null && tool.progress() != e.getValue()) {
+                tool = tool.withProgress(e.getValue());
+                repository.update(tool);
+                toolCache.put(e.getKey(), tool);
             }
-            pendingProgress.clear();
-            dirty.clear();
         }
+        progressBuffer.clearAll();
     }
 
     public void cacheTool(Player player, GrowthTool tool) {
         toolCache.put(player.getUniqueId(), tool);
-        pendingProgress.put(player.getUniqueId(), tool.progress());
+        progressBuffer.setBaseline(player.getUniqueId(), tool.progress());
     }
 
     public boolean tryReissueLock(Player player) {
@@ -327,15 +351,19 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         GrowthTool tool = toolCache.get(player.getUniqueId());
-        Long pending = pendingProgress.get(player.getUniqueId());
+        Long pending = progressBuffer.pendingOf(player.getUniqueId());
         if (tool != null && pending != null && tool.progress() != pending) {
             GrowthTool updated = tool.withProgress(pending);
-            repository.update(updated);
-            toolCache.put(player.getUniqueId(), updated);
+            try {
+                repository.update(updated);
+                toolCache.put(player.getUniqueId(), updated);
+            } catch (Exception e) {
+                // keep the overlay: a reconnect applies the still-pending progress again
+                getLogger().log(Level.WARNING, "final progress flush failed for " + player.getUniqueId(), e);
+            }
         }
         toolCache.remove(player.getUniqueId());
-        pendingProgress.remove(player.getUniqueId());
-        dirty.remove(player.getUniqueId());
+        progressBuffer.clearOne(player.getUniqueId());
         reissueLocks.remove(player.getUniqueId());
     }
 
@@ -408,7 +436,7 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
             GrowthTool broken = tool.withStatus(GrowthTool.Status.BROKEN);
             repository.update(broken);
             toolCache.put(player.getUniqueId(), broken);
-            pendingProgress.put(player.getUniqueId(), broken.progress());
+            progressBuffer.setBaseline(player.getUniqueId(), broken.progress());
             ItemStack shell = GrowthItems.buildBroken(this, broken);
             player.getInventory().setItemInMainHand(shell);
             player.playSound(player.getLocation(), org.bukkit.Sound.ENTITY_ITEM_BREAK, 1f, 1f);

@@ -1,14 +1,18 @@
 package io.github.eariver.wayfarer.frontier.gui;
 
+import io.github.eariver.wayfarer.common.GuiClicks;
 import io.github.eariver.wayfarer.common.Text;
 import io.github.eariver.wayfarer.frontier.WayfarerFrontierPlugin;
 import io.github.eariver.wayfarer.frontier.item.ThemeItems.ItemType;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -84,33 +88,103 @@ public final class FrontierNavGui implements Listener {
         return item;
     }
 
+    /**
+     * R-14: only clicks on our own top inventory count. getCurrentItem() also reports
+     * the item under the cursor when the player clicks their own inventory, so an elytra
+     * in the player's bag must not trigger navigation. Shift/number-key/drag actions are
+     * cancelled wholesale.
+     */
     @EventHandler
     public void onClick(InventoryClickEvent event) {
         if (!(event.getInventory().getHolder() instanceof NavHolder)) return;
+        boolean clickedTop = event.getClickedInventory() != null
+                && event.getClickedInventory().equals(event.getView().getTopInventory());
+        if (!GuiClicks.countsAsButtonClick(clickedTop, event.getRawSlot(),
+                event.getView().getTopInventory().getSize())) {
+            event.setCancelled(true);
+            return;
+        }
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (event.getClick() != ClickType.LEFT && event.getClick() != ClickType.RIGHT) return;
+        int slot = event.getRawSlot();
         ItemStack clicked = event.getCurrentItem();
         if (clicked == null) return;
+        // resolve the action from the slot's real button, never from the material alone
+        NavAction action = NavAction.forSlot(slot, clicked.getType());
+        if (action == null) return;
         player.closeInventory();
-        switch (clicked.getType()) {
-            case ELYTRA -> {
+        action.run(plugin, player);
+    }
+
+    /** Drags across the GUI must never move items in or out. */
+    @EventHandler
+    public void onDrag(InventoryDragEvent event) {
+        if (!(event.getInventory().getHolder() instanceof NavHolder)) return;
+        boolean touchesTop = event.getRawSlots().stream()
+                .anyMatch(s -> s < event.getView().getTopInventory().getSize());
+        if (touchesTop) event.setCancelled(true);
+    }
+
+    private enum NavAction {
+        WORLDS_BEYOND(10, Material.ELYTRA) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player) {
                 if (plugin.safeTeleport(player, "worlds-beyond")) {
                     plugin.themeItems().grantLoadoutOnEntry(player);
                 } else {
                     player.sendMessage(Text.mm("<red>Worlds Beyond arrival is not available."));
                 }
             }
-            case NETHERITE_SWORD -> {
-                if (!plugin.safeTeleport(player, "ruined-frontier")) {
+        },
+        RUINED_FRONTIER(12, Material.NETHERITE_SWORD) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player) {
+                if (plugin.safeTeleport(player, "ruined-frontier")) {
+                    plugin.themeItems().grantLoadoutOnEntry(player);
+                } else {
                     player.sendMessage(Text.mm("<red>Ruined Frontier arrival is not available."));
                 }
             }
-            case EMERALD -> plugin.shopGui().open(player);
-            case RECOVERY_COMPASS -> player.teleport(plugin.gateArrival());
-            default -> {
+        },
+        SHOP(14, Material.EMERALD) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player) {
+                plugin.shopGui().open(player);
             }
+        },
+        RETURN_TO_GATE(16, Material.RECOVERY_COMPASS) {
+            @Override
+            void run(WayfarerFrontierPlugin plugin, Player player) {
+                Location gate = plugin.gateArrival();
+                if (gate == null || gate.getWorld() == null) {
+                    player.sendMessage(Text.mm("<red>The gate is not available."));
+                    return;
+                }
+                if (!player.teleport(gate)) {
+                    player.sendMessage(Text.mm("<red>Teleport to the gate failed."));
+                }
+            }
+        };
+
+        private final int slot;
+        private final Material material;
+
+        NavAction(int slot, Material material) {
+            this.slot = slot;
+            this.material = material;
         }
+
+        static NavAction forSlot(int slot, Material material) {
+            for (NavAction action : values()) {
+                if (action.slot == slot && action.material == material) return action;
+            }
+            return null;
+        }
+
+        abstract void run(WayfarerFrontierPlugin plugin, Player player);
     }
+
 
     public static final class NavHolder implements InventoryHolder {
         private Inventory inventory;

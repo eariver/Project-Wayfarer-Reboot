@@ -24,18 +24,26 @@ public final class VaultWallet implements GrowthPaidOps.Wallet {
     }
 
     @Override
-    public boolean withdraw(long amount) {
-        if (economy == null || player == null) return false;
-        return confirmed(economy.withdrawPlayer(player, amount));
+    public GrowthPaidOps.Confirmation withdraw(long amount) {
+        return confirm(() -> economy.withdrawPlayer(player, amount));
     }
 
     @Override
-    public boolean deposit(long amount) {
-        if (economy == null || player == null) return false;
-        return confirmed(economy.depositPlayer(player, amount));
+    public GrowthPaidOps.Confirmation deposit(long amount) {
+        return confirm(() -> economy.depositPlayer(player, amount));
     }
 
-    private static boolean confirmed(EconomyResponse response) {
-        return response != null && response.transactionSuccess();
+    /** R-04: exceptions and null responses are UNKNOWN, never a plain failure. */
+    private GrowthPaidOps.Confirmation confirm(java.util.function.Supplier<EconomyResponse> leg) {
+        if (economy == null || player == null) return GrowthPaidOps.Confirmation.UNKNOWN;
+        try {
+            EconomyResponse response = leg.get();
+            if (response == null) return GrowthPaidOps.Confirmation.UNKNOWN;
+            return response.transactionSuccess()
+                    ? GrowthPaidOps.Confirmation.OK
+                    : GrowthPaidOps.Confirmation.FAILED;
+        } catch (RuntimeException e) {
+            return GrowthPaidOps.Confirmation.UNKNOWN;
+        }
     }
 }

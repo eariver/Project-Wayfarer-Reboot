@@ -100,3 +100,27 @@ ledger rows inside one transaction; `ensureRow` only inserts when the holder is 
 The external (Vault) path runs through `WaymarkTransfer` with verified legs and a
 compensating refund; the remaining exactly-once gap across the process boundary is
 documented as a residual constraint rather than hidden.
+
+## D-2026-10-14-01: waystone anchor vs core coordinates (R-10)
+
+A waystone record stores the ANCHOR (the ground block at the centre of the 5x5 floor); the
+structure is built one block above it (core at y+1, head y+2, cap y+3, lanterns at the floor
+corners' tops). Resolving a clicked block therefore searches the anchor's bounding box and
+tests membership with `WaystoneGeometry.isStructureBlock`, so the core/head/floor all resolve to
+the same record. Existing records need no migration: the stored coordinates were already the
+anchor.
+
+## D-2026-10-14-02: tri-state provider confirmation (R-01/R-04)
+
+Vault responses carry no timeout information, so "refused" and "answer unknown" cannot be
+distinguished by a boolean. Decision: money movements report `Confirmation{OK,FAILED,UNKNOWN}`;
+a refused credit compensates the sender (and that compensation is confirmed), an UNKNOWN credit
+attempts no compensation at all (it could double-credit), and UNKNOWN states surface a reconcile
+reference instead of a success or "not charged" message.
+
+## D-2026-10-14-03: progress overlay is a domain object (R-03)
+
+Buffered mining progress is owned by `ProgressBuffer` (pending value + dirty set) instead of two
+loose maps in the plugin, so the accumulation rule (add on top of the newest value) is unit
+testable and every consumer (GUI, status, lore, evolution, quit, evolution, BROKEN) reads the
+same source.

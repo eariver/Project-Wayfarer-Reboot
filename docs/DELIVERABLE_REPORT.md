@@ -165,6 +165,32 @@ reissue charged exactly once (216 WM, epoch 0→1, data preserved). Residual ris
 exactly-once across the economy/DB boundary — documented in `WaymarkTransfer` and
 handled by reconcile references.
 
+## 8. R-01..R-15 residual audit batch (2026-10-14)
+
+Independent-review fixes on `work/playable-alpha` (90 unit tests, build green).
+
+- **R-01 (critical, currency)**: a refused deposit used to debit the recipient; the compensating
+  credit now goes back to the sender and only when the credit certainly failed.
+- **R-02 (critical, DB)**: `Db.tx` leaked its lock when the connection failed and nested
+  transactions committed the enclosing work; only the outermost frame owns the transaction now,
+  and the Waymark ledger no longer nests.
+- **R-03 (critical, progress)**: breaks between checkpoints overwrote each other; a
+  `ProgressBuffer` overlay accumulates them and survives failed checkpoints.
+- **R-04**: provider exceptions are classified as UNKNOWN (never reported as uncharged) and carry
+  a reconcile reference.
+- **R-05**: `/wayfarer-frontier gate <player>` now requires `wayfarer.frontier.admin`.
+- **R-06..R-09 (Main)**: right-click GUI for ACTIVE tools, GUI material/name from the item's source
+  of truth, an unambiguous BROKEN block-break rule, and one progress source of truth.
+- **R-10..R-13 (Frontier)**: waystone anchor/core coordinate resolution, safe teleport landing,
+  precise structure protection/removal, and no more duplicate elytra.
+- **R-14/R-15**: every GUI validates the clicked inventory and its buttons (shared
+  `GuiClicks`); the shops verify the credit/refund legs.
+- Extra audit: removed per-move/per-interact debug logging and the per-move DB query in the
+  Frontier listener, single teleport handling, safe gate arrivals.
+
+Runtime: both servers restarted on the new jars with clean startup; economy and Growth tool data
+verified intact. Interactive flows (GUI, waystone, launchpad, gate) still need the Owner client.
+
 ## 6. Post-playtest repair batch (2026-10-13)
 
 Owner playtest feedback (P-1..P-19 in docs/PROGRESS.md) was fixed on `work/playable-alpha`.

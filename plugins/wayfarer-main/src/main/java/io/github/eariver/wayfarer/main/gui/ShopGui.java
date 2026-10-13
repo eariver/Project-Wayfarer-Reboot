@@ -1,5 +1,6 @@
 package io.github.eariver.wayfarer.main.gui;
 
+import io.github.eariver.wayfarer.common.GuiClicks;
 import io.github.eariver.wayfarer.common.Text;
 import io.github.eariver.wayfarer.main.WayfarerMainPlugin;
 import net.milkbowl.vault.economy.Economy;
@@ -9,7 +10,9 @@ import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -52,17 +55,22 @@ public final class ShopGui implements Listener {
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
 
+    /** Sell icons in slot order (slot 0..). */
+    public static final List<Material> SELL_ORDER = List.copyOf(SELL.keySet());
+    /** Buy icons in slot order (slot 9..). */
+    public static final List<Material> BUY_ORDER = List.copyOf(BUY.keySet());
+
     public void open(Player player) {
         InventoryHolder holder = new ShopHolder();
         Inventory inv = Bukkit.createInventory(holder, 27, Text.mm("<dark_gray>Waymark Shop"));
         ((ShopHolder) holder).setInventory(inv);
         int slot = 0;
-        for (Map.Entry<Material, Long> e : SELL.entrySet()) {
-            inv.setItem(slot++, icon(e.getKey(), "<green>Sell", "Sell " + e.getValue() + " WM each", e.getValue()));
+        for (Material m : SELL_ORDER) {
+            inv.setItem(slot++, icon(m, "<green>Sell", "Sell " + SELL.get(m) + " WM each", SELL.get(m)));
         }
         slot = 9;
-        for (Map.Entry<Material, Long> e : BUY.entrySet()) {
-            inv.setItem(slot++, icon(e.getKey(), "<aqua>Buy", "Buy " + e.getValue() + " WM each", e.getValue()));
+        for (Material m : BUY_ORDER) {
+            inv.setItem(slot++, icon(m, "<aqua>Buy", "Buy " + BUY.get(m) + " WM each", BUY.get(m)));
         }
         player.openInventory(inv);
     }
@@ -104,8 +112,20 @@ public final class ShopGui implements Listener {
             player.sendMessage(Text.mm("<red>You have nothing to sell."));
             return;
         }
-        player.getInventory().removeItem(stack);
-        economy.depositPlayer(player, price);
+        // R-15: credit FIRST, then take the item; if the credit is not confirmed the item
+        // stays in the inventory (never a free item for the shop).
+        EconomyResponse credit = economy.depositPlayer(player, price);
+        if (credit == null || !credit.transactionSuccess()) {
+            player.sendMessage(Text.mm("<red>Sale failed; the item was not taken."));
+            return;
+        }
+        ItemStack removed = player.getInventory().removeItem(stack).isEmpty() ? stack : null;
+        if (removed == null) {
+            // the item could not be removed after the credit: compensate and report
+            compensate(economy, player, price);
+            player.sendMessage(Text.mm("<red>Inventory changed during the sale; you were not charged or credited."));
+            return;
+        }
         player.sendMessage(Text.mm("<green>Sold <item> for <price> WM.", "item", pretty(material), "price", String.valueOf(price)));
     }
 
@@ -121,11 +141,24 @@ public final class ShopGui implements Listener {
         }
         var leftover = player.getInventory().addItem(new ItemStack(material, 1));
         if (!leftover.isEmpty()) {
-            economy.depositPlayer(player, price); // refund: no inventory space
-            player.sendMessage(Text.mm("<red>No inventory space; refunded."));
+            // R-15: the refund leg must be confirmed before the player is told
+            boolean refunded = compensate(economy, player, price);
+            player.sendMessage(refunded
+                    ? Text.mm("<red>No inventory space; refunded.")
+                    : Text.mm("<red>No inventory space and the refund FAILED. Reference: waymark-buy-refund"));
             return;
         }
         player.sendMessage(Text.mm("<green>Bought <item> for <price> WM.", "item", pretty(material), "price", String.valueOf(price)));
+    }
+
+    /** Confirmed compensating credit; returns true when the provider confirmed it. */
+    private static boolean compensate(Economy economy, Player player, long amount) {
+        try {
+            EconomyResponse response = economy.depositPlayer(player, amount);
+            return response != null && response.transactionSuccess();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     public static String pretty(Material material) {

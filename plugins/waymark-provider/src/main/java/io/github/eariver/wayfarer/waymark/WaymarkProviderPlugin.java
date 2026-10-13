@@ -105,6 +105,8 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
     /**
      * Vault adapter whose party lookup never needs an online player: the parties passed
      * in are used first and only an unseen holder falls back to the offline lookup.
+     * Every leg reports a {@link WaymarkTransfer.Confirmation}, mapping a throwing or
+     * null response to UNKNOWN (R-04).
      */
     public record VaultAdapter(net.milkbowl.vault.economy.Economy economy, Map<UUID, OfflinePlayer> parties)
             implements WaymarkTransfer.Provider {
@@ -121,21 +123,31 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
 
         @Override
         public boolean has(UUID holder, long amount) {
-            return economy.has(party(holder), amount);
+            return economy != null && economy.has(party(holder), amount);
         }
 
         @Override
-        public boolean withdraw(UUID holder, long amount) {
-            return confirmed(economy.withdrawPlayer(party(holder), amount));
+        public WaymarkTransfer.Confirmation withdraw(UUID holder, long amount) {
+            return confirm(economy, () -> economy.withdrawPlayer(party(holder), amount));
         }
 
         @Override
-        public boolean deposit(UUID holder, long amount) {
-            return confirmed(economy.depositPlayer(party(holder), amount));
+        public WaymarkTransfer.Confirmation deposit(UUID holder, long amount) {
+            return confirm(economy, () -> economy.depositPlayer(party(holder), amount));
         }
 
-        private static boolean confirmed(net.milkbowl.vault.economy.EconomyResponse response) {
-            return response != null && response.transactionSuccess();
+        private static WaymarkTransfer.Confirmation confirm(net.milkbowl.vault.economy.Economy economy,
+                                                             java.util.function.Supplier<net.milkbowl.vault.economy.EconomyResponse> leg) {
+            if (economy == null) return WaymarkTransfer.Confirmation.UNKNOWN;
+            try {
+                net.milkbowl.vault.economy.EconomyResponse response = leg.get();
+                if (response == null) return WaymarkTransfer.Confirmation.UNKNOWN;
+                return response.transactionSuccess()
+                        ? WaymarkTransfer.Confirmation.OK
+                        : WaymarkTransfer.Confirmation.FAILED;
+            } catch (RuntimeException e) {
+                return WaymarkTransfer.Confirmation.UNKNOWN;
+            }
         }
     }
 
@@ -231,15 +243,24 @@ public final class WaymarkProviderPlugin extends JavaPlugin {
                     case PROVIDER_UNAVAILABLE ->
                             sender.sendMessage(Text.mm("<red>Economy provider unavailable; nothing was sent."));
                     case INSUFFICIENT_FUNDS -> sender.sendMessage(Text.mm("<red>Payment failed: insufficient funds"));
+                    // WITHDRAW_FAILED: the provider refused the debit, so nothing moved
                     case WITHDRAW_FAILED -> sender.sendMessage(Text.mm(
-                            "<red>The provider did not confirm the withdrawal; nothing was sent. "
-                                    + "Keep this reference for an admin: <ref>", "ref", out.reference()));
+                            "<red>The withdrawal was refused; nothing was sent."));
+                    case WITHDRAW_UNKNOWN -> sender.sendMessage(Text.mm(
+                            "<gold>The withdrawal could not be confirmed. Do not retry until an admin checks. "
+                                    + "Reference: <ref>", "ref", out.reference()));
                     case DEPOSIT_FAILED_REFUNDED -> sender.sendMessage(Text.mm(
-                            "<red>The deposit failed after the withdrawal; your WM was returned. "
+                            "<red>The deposit was refused after the withdrawal; your WM was returned. "
                                     + "Nothing was sent."));
                     case DEPOSIT_FAILED_REFUND_FAILED -> sender.sendMessage(Text.mm(
-                            "<red>The deposit failed AND the refund failed. "
+                            "<red>The deposit was refused and the refund FAILED. "
                                     + "Keep this reference for an admin: <ref>", "ref", out.reference()));
+                    case DEPOSIT_UNKNOWN -> sender.sendMessage(Text.mm(
+                            "<gold>The deposit could not be confirmed, so no compensation was attempted. "
+                                    + "Reference: <ref>", "ref", out.reference()));
+                    case REFUND_UNKNOWN -> sender.sendMessage(Text.mm(
+                            "<gold>The deposit failed and the refund could not be confirmed. "
+                                    + "Reference: <ref>", "ref", out.reference()));
                 }
                 return true;
             }

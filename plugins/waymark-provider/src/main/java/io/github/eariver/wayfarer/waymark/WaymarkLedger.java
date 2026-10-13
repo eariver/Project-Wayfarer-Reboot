@@ -55,7 +55,8 @@ public final class WaymarkLedger {
             ensureRow(c, target);
             addBalance(c, target, amount);
             ledger(c, kind, null, target, amount, reference);
-            return WaymarkResult.ok(balance(target));
+            // connection-aware read: a public balance() here would open a NESTED tx
+            return WaymarkResult.ok(balance(c, target));
         });
     }
 
@@ -74,7 +75,7 @@ public final class WaymarkLedger {
                 }
             }
             ledger(c, kind, actor, target, -amount, reference);
-            return WaymarkResult.ok(balance(target));
+            return WaymarkResult.ok(balance(c, target));
         });
     }
 
@@ -102,7 +103,7 @@ public final class WaymarkLedger {
             addBalance(c, to, amount);
             ledger(c, "pay", from, to, amount, from.toString());
             ledger(c, "pay", from, from, -amount, to.toString());
-            return WaymarkResult.ok(balance(to), ref);
+            return WaymarkResult.ok(balance(c, to), ref);
         });
     }
 
