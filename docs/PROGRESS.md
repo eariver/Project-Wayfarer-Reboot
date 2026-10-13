@@ -167,7 +167,7 @@ scope per the mission boundaries), so the RCON password exposed there is conside
 console FIFO (`console.fifo`) instead. The password was only ever used on this PoC instance and was never shared
 with any production environment.
 
-## M1-M3 corrective maintenance batch (2026-10-13, HEAD 680e7575 → fa31158a on work/playable-alpha)
+## M1-M3 corrective maintenance batch (2026-10-13, HEAD 6121a14 → 4e2f9c4 (final) on work/playable-alpha)
 
 Small corrective batch ahead of the independent review: git tracking repair, paid
 growth-pickaxe failure paths, Waymark transfer integrity. Unit tests: 50 passed / 0 failed

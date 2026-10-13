@@ -142,7 +142,7 @@ Multiverse-Core/NetherPortals, WorldEdit, WorldGuard.
 | **LuckPerms 5.5.60 (Bukkit + Velocity)** | Deployed on all five servers (backends use local file storage — no shared MariaDB in the sandbox, so permissions are per-server here). |
 | **advanced-portals 2.8.0 (spigot)** | **Not deployed**: the cross-server portal design needs the Velocity proxy component, which was not included in this drop. |
 
-## 7. M1-M3 corrective batch (2026-10-13, HEAD 680e7575 → fa31158a)
+## 7. M1-M3 corrective batch (2026-10-13, HEAD 6121a14 → 4e2f9c4 (final))
 
 Pre-independent-review maintenance on `work/playable-alpha`. Scope limited to git
 tracking repair, paid growth-pickaxe failure paths and Waymark transfer integrity
