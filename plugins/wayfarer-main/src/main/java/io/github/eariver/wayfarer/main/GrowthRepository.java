@@ -4,6 +4,7 @@ import io.github.eariver.wayfarer.common.Db;
 import io.github.eariver.wayfarer.main.domain.EvolutionPlan;
 import io.github.eariver.wayfarer.main.domain.GrowthTool;
 import io.github.eariver.wayfarer.main.domain.RepairPricing;
+import io.github.eariver.wayfarer.main.pay.GrowthPaidOps;
 
 import java.io.File;
 import java.sql.PreparedStatement;
@@ -22,7 +23,7 @@ import java.util.UUID;
  * the logical tool or violate the primary key. Legacy rows are migrated in place
  * (netherite flag added with default false).
  */
-public final class GrowthRepository {
+public final class GrowthRepository implements GrowthPaidOps.ToolStore {
 
     private final Db db;
 
@@ -157,8 +158,9 @@ public final class GrowthRepository {
         });
     }
 
-    public void close() {
-        db.close();
+    @Override
+    public GrowthTool findTool(UUID toolId) {
+        return findByToolId(toolId);
     }
 
     private static GrowthTool read(ResultSet rs) throws SQLException {
@@ -196,5 +198,9 @@ public final class GrowthRepository {
                 s.getDouble("minimum-charge-ratio", 0.25),
                 s.getDouble("broken-flat-surcharge", 100),
                 s.getDouble("broken-surcharge-per-evolution", 5));
+    }
+
+    public void close() {
+        db.close();
     }
 }

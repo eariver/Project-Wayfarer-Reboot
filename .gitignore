@@ -6,6 +6,13 @@ out/
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
 
+# plugin source module build outputs only — the sources themselves stay trackable
+plugins/build/
+plugins/*/build/
+plugins/*/libs/
+plugins/*/src/main/kotlin/
+tools/*/build/
+
 # IDE
 .idea/
 *.iml
@@ -14,7 +21,6 @@ out/
 # OS
 .DS_Store
 Thumbs.db
-wayfarer-evidence/
 
 # accidentally-created runtime files (never track these)
 eula.txt
@@ -34,7 +40,6 @@ world_the_end/
 crash-reports/
 libraries/
 versions/
-plugins/
-wayfarer-evidence/
 commands.in
 console.log
+wayfarer-evidence/

@@ -167,6 +167,83 @@ scope per the mission boundaries), so the RCON password exposed there is conside
 console FIFO (`console.fifo`) instead. The password was only ever used on this PoC instance and was never shared
 with any production environment.
 
+## M1-M3 corrective maintenance batch (2026-10-13, HEAD 680e7575 → fa31158a on work/playable-alpha)
+
+Small corrective batch ahead of the independent review: git tracking repair, paid
+growth-pickaxe failure paths, Waymark transfer integrity. Unit tests: 50 passed / 0 failed
+(`./gradlew build` BUILD SUCCESSFUL).
+
+### M1 — `.gitignore` over-exclusion
+
+- Root cause: the broad `plugins/` rule made every NEW file under the real source modules
+  (`plugins/wayfarer-main`, `plugins/wayfarer-frontier`, `plugins/waymark-provider`)
+  invisible to git; existing tracked files stayed tracked so the gap only bit new work.
+- Fix: replaced the broad rule with `plugins/build/`, `plugins/*/build/`, `plugins/*/libs/`,
+  `plugins/*/src/main/kotlin/`, `tools/*/build/` (build outputs only) and dropped the
+  duplicated `wayfarer-evidence/` entry. Security rules for runtime artifacts were kept
+  (eula.txt, server.properties, logs/, cache/, world*/, crash-reports/, libraries/,
+  versions/, commands.in, console.log, wayfarer-evidence/).
+- Verified with `git check-ignore -v`: a new java source under the pay package is
+  trackable; server.properties / logs / world data / JARs stay ignored. The added test and
+  main sources of this batch are the live proof (they are tracked).
+
+### M2 — paid growth-pickaxe operations (reissue / upgrade-netherite / repair)
+
+- Root cause: the wallet and H2 were treated as if they were one transaction. `reissue`
+  refunded unconditionally after a `findByToolId` miss even when the epoch bump had
+  committed (free reissue), and the refund's own `EconomyResponse` was never checked; a
+  throwing `bumpEpoch`/`markNetheriteUpgraded` escaped uncaught, leaving the player charged
+  with no message and no record. `upgradeNetherite` had no operation lock.
+- Fix: new `io.github.eariver.wayfarar.main.pay.GrowthPaidOps` (+ `VaultWallet`), used by
+  `GrowthCommand` for reissue / upgrade-netherite / repair. It classifies every outcome
+  through a re-read of the authoritative row: applied (deliver, rejoin recovers),
+  not-applied-0-rows (compensating refund), not-applied-probe, unknown (charge kept,
+  reference surfaced). Refunds are confirmed before the player is told they were not
+  charged; unknown/refund-failed states log and show a reconcile reference.
+  `GrowthRepository` now implements `GrowthPaidOps.ToolStore`; the same reissue lock also
+  guards the Netherite upgrade so double clicks cannot double-apply.
+- Tests: `GrowthPaidOpsTest` 13 cases (happy paths, declined, unconfirmed withdraw,
+  0-row refund, refund failure, mutation-throws with row unchanged/applied/unreadable/
+  vanished, delivery failure recovery, duplicate netherite upgrade, repair variants).
+
+### M3 — Waymark transfers
+
+- Root cause: `/waymark pay` called `withdrawPlayer`/`depositPlayer` and ignored both
+  `EconomyResponse`s; the local fallback ran withdraw and deposit as two separate
+  transactions; `give/take/set` had unchecked return values (`set` always yielded true);
+  and `WaymarkLedger`'s shared `MERGE` upsert reset an existing holder's balance to 0 on
+  every deposit (currency loss).
+- Fix: `WaymarkLedger` extracted from the plugin with a single-transaction `transfer`
+  (guarded debit + credit + two ledger rows, all-or-nothing) and a non-destructive
+  `ensureRow`; `WaymarkTransfer` (+ `WaymarkProviderPlugin.VaultAdapter`) drives the
+  external path with verified legs, compensating refund on deposit failure and explicit
+  statuses. The command maps them to messages and only reports success on a verified send.
+- Documented residual constraints: no exactly-once across provider legs (a crash between
+  the legs can leave the sender debited — the reference string is the reconcile handle),
+  and the compensating withdrawal may touch the recipient's own coins if a deposit partly
+  landed.
+- Tests: `WaymarkTransferTest` 6 cases (normal, self, invalid amount, missing provider,
+  insufficient funds, withdraw unconfirmed, deposit-refunded, deposit-refund-failed,
+  admin give/take/set) + `WaymarkLedgerTest` 6 cases (both sides, insufficient, self,
+  rollback-without-currency-loss via a CHECK-constrained ledger, guarded withdraw,
+  negative set rejected).
+
+### Runtime verification (isolated PoC, console FIFO; RCON stays disabled)
+
+- main + frontier restarted on the new jars; startup logs verified
+  (`Wayfarer_Main ready`, mcMMO 2.3.003-SNAPSHOT, `/shop` delegation, WaymarkProvider
+  delegating to Vault); 0 mcMMO API exceptions.
+- `/waymark balance` → 0 WM; self-pay → "You cannot pay yourself." (P-11 kept);
+  `/waymark pay kanpyo_himmono 1` → "Payment failed: insufficient funds";
+  reissue after funding: "Reissued for 216 WM (epoch 1); progress, branch and upgrades
+  kept." with the balance moving 500 → 284 (single charge, epoch 0 → 1, progress/branch/
+  netherite preserved). Growth pickaxe data intact after the restart.
+
+### Not verified here
+
+- Interactive UI flows (GUI, nav items, waystones/launchpads) still need the Owner client.
+- Frontier live gameplay unchanged (jar not modified this batch).
+
 ## Owner playtest follow-up (2026-10-13, Main)
 
 Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (before P-10).

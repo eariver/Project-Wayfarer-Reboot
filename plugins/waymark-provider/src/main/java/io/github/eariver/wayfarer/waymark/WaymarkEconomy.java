@@ -123,7 +123,7 @@ public final class WaymarkEconomy implements Economy {
 
     @Override
     public EconomyResponse withdrawPlayer(OfflinePlayer player, double amount) {
-        WaymarkProviderPlugin.Result r = plugin.withdraw(null, player.getUniqueId(), (long) amount, "vault", "withdraw");
+        WaymarkResult r = plugin.withdraw(null, player.getUniqueId(), (long) amount, "vault", "withdraw");
         return response(amount, r);
     }
 
@@ -145,7 +145,7 @@ public final class WaymarkEconomy implements Economy {
 
     @Override
     public EconomyResponse depositPlayer(OfflinePlayer player, double amount) {
-        WaymarkProviderPlugin.Result r = plugin.deposit(player.getUniqueId(), (long) amount, "vault", "deposit");
+        WaymarkResult r = plugin.deposit(player.getUniqueId(), (long) amount, "vault", "deposit");
         return response(amount, r);
     }
 
@@ -159,7 +159,7 @@ public final class WaymarkEconomy implements Economy {
         return depositPlayer(player, amount);
     }
 
-    private EconomyResponse response(double amount, WaymarkProviderPlugin.Result r) {
+    private EconomyResponse response(double amount, WaymarkResult r) {
         return new EconomyResponse(amount, r.balance(),
                 r.ok() ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
                 r.ok() ? null : r.error());

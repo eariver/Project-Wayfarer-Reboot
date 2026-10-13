@@ -142,6 +142,29 @@ Multiverse-Core/NetherPortals, WorldEdit, WorldGuard.
 | **LuckPerms 5.5.60 (Bukkit + Velocity)** | Deployed on all five servers (backends use local file storage — no shared MariaDB in the sandbox, so permissions are per-server here). |
 | **advanced-portals 2.8.0 (spigot)** | **Not deployed**: the cross-server portal design needs the Velocity proxy component, which was not included in this drop. |
 
+## 7. M1-M3 corrective batch (2026-10-13, HEAD 680e7575 → fa31158a)
+
+Pre-independent-review maintenance on `work/playable-alpha`. Scope limited to git
+tracking repair, paid growth-pickaxe failure paths and Waymark transfer integrity
+(no gameplay/spec changes).
+
+- M1: `.gitignore` no longer excludes the real plugin source tree; only build outputs
+  under `plugins/` stay ignored; runtime artifact rules preserved.
+- M2: `GrowthPaidOps`/`VaultWallet` classify reissue / upgrade-netherite / repair
+  outcomes through a row re-read: applied → deliver (rejoin recovers), not applied →
+  confirmed refund, unknown → charge kept + reconcile reference. Refund results are
+  always checked; the Netherite upgrade now shares the reissue lock.
+- M3: `WaymarkLedger` performs transfers in ONE transaction and no longer wipes existing
+  balances on deposit (the old MERGE upsert reset the balance column). `WaymarkTransfer`
+  verifies both provider legs on `/waymark pay` and compensates with a confirmed refund
+  when a deposit fails; admin give/take/set check their results.
+
+Unit tests: 50 passed, 0 failed (`./gradlew build` green). Runtime: main + frontier
+restarted on the new jars, `/waymark` self-pay rejected, insufficient-funds rejected,
+reissue charged exactly once (216 WM, epoch 0→1, data preserved). Residual risk: no
+exactly-once across the economy/DB boundary — documented in `WaymarkTransfer` and
+handled by reconcile references.
+
 ## 6. Post-playtest repair batch (2026-10-13)
 
 Owner playtest feedback (P-1..P-19 in docs/PROGRESS.md) was fixed on `work/playable-alpha`.

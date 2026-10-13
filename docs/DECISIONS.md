@@ -79,3 +79,24 @@ The previously deployed mcMMO was the 2.0.0 jar from the mcMMO-Dev GitHub releas
 Fix: build mcMMO from current mcMMO-Dev source (pom target `26.1.1-R0.1-SNAPSHOT`, Java 17) with Maven and deploy the
 resulting `mcMMO 2.3.003-SNAPSHOT`. No player data was migrated: mcMMO still uses its shared MariaDB storage and its own
 table updates run on boot.
+
+## D-2026-10-13-03: compensating flow for paid tool operations (M2)
+
+Vault and H2 are not one ACID transaction, so `reissue` / `upgrade-netherite` / `repair`
+must not claim exactly-once. Decision: classify every failure through a re-read of the
+authoritative row — applied (keep charge, deliver, rejoin recovers), not applied
+(0-row conditional update or unchanged probe: compensating refund whose own result is
+verified), unknown (unreadable probe or vanished row: keep the charge and surface a
+reconcile reference to the player and the log). A general transaction framework was
+deliberately not built; the flow lives in `io.github.eariver.wayfarer.main.pay.GrowthPaidOps`
+and is exercised by fault-injection unit tests (fake wallet + stub repository).
+
+## D-2026-10-13-04: single-transaction Waymark transfer and non-destructive upsert (M3)
+
+`/waymark pay` used two separate ledger transactions and ignored provider responses;
+the shared `ensureRow` MERGE also reset existing balances to 0 on every deposit (currency
+loss). Decision: `WaymarkLedger.transfer` performs the guarded debit, the credit and both
+ledger rows inside one transaction; `ensureRow` only inserts when the holder is absent.
+The external (Vault) path runs through `WaymarkTransfer` with verified legs and a
+compensating refund; the remaining exactly-once gap across the process boundary is
+documented as a residual constraint rather than hidden.

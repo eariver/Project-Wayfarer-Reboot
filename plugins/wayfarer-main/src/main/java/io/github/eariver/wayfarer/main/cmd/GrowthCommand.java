@@ -8,8 +8,8 @@ import io.github.eariver.wayfarer.main.domain.EvolutionPlan;
 import io.github.eariver.wayfarer.main.domain.GrowthTool;
 import io.github.eariver.wayfarer.main.domain.RepairPricing;
 import io.github.eariver.wayfarer.main.gui.GrowthGui;
-import net.milkbowl.vault.economy.Economy;
-import net.milkbowl.vault.economy.EconomyResponse;
+import io.github.eariver.wayfarer.main.pay.GrowthPaidOps;
+import io.github.eariver.wayfarer.main.pay.VaultWallet;
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -23,9 +23,12 @@ import java.util.UUID;
 public final class GrowthCommand implements CommandExecutor {
 
     private final WayfarerMainPlugin plugin;
+    private final GrowthPaidOps.ToolStore store;
 
     public GrowthCommand(WayfarerMainPlugin plugin) {
         this.plugin = plugin;
+        // the repository already satisfies the ToolStore surface (bumpEpoch, markNetheriteUpgraded, findTool, update)
+        this.store = plugin.repository();
     }
 
     @Override
@@ -107,40 +110,50 @@ public final class GrowthCommand implements CommandExecutor {
         int max = heldIsTool ? held.getType().getMaxDurability() : 1;
         long cost = broken ? pricing.brokenRepairCost(tier) : pricing.partialRepairCost(tier, damage, max);
 
-        Economy economy = plugin.economy();
         if (!plugin.economyAvailable()) {
             // no free repairs without an economy provider
             sender.sendMessage(Text.mm("<red>Economy unavailable; repair cannot be processed."));
             return true;
         }
-        if (cost > 0 && !economy.has(player, cost)) {
-            sender.sendMessage(Text.mm("<red>Repair costs <white><cost></white> WM; you cannot afford it.",
-                    "cost", String.valueOf(cost)));
-            return true;
-        }
-        EconomyResponse response = economy.withdrawPlayer(player, cost);
-        if (!response.transactionSuccess()) {
-            sender.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
-            return true;
-        }
-        GrowthTool repaired = tool.withStatus(GrowthTool.Status.ACTIVE);
-        try {
-            plugin.repository().update(repaired);
-        } catch (Exception e) {
-            plugin.getLogger().warning("repair DB update failed: " + e);
-            economy.depositPlayer(player, cost); // refund; tool state unchanged
-            sender.sendMessage(Text.mm("<red>Database error; you were not charged."));
-            return true;
-        }
-        plugin.cacheTool(player, repaired);
-        ItemStack restored = Items.rebuildPreservingDamage(plugin, repaired, heldIsTool ? held : null);
-        if (heldIsTool) {
-            player.getInventory().setItemInMainHand(restored);
-        } else {
-            plugin.giveCurrentItem(player, repaired);
-        }
-        sender.sendMessage(Text.mm("<green>Repaired for <white><cost></white> WM.", "cost", String.valueOf(cost)));
+        GrowthPaidOps.Wallet wallet = wallet(player);
+        final GrowthTool repaired = tool.withStatus(GrowthTool.Status.ACTIVE);
+        final ItemStack heldItem = held;
+        final boolean holdsTool = heldIsTool;
+        GrowthPaidOps.Delivery deliver = () -> {
+            plugin.cacheTool(player, repaired);
+            ItemStack restored = Items.rebuildPreservingDamage(plugin, repaired, holdsTool ? heldItem : null);
+            if (holdsTool) {
+                player.getInventory().setItemInMainHand(restored);
+            } else {
+                plugin.giveCurrentItem(player, repaired);
+            }
+        };
+        GrowthPaidOps.Result result = GrowthPaidOps.repair(store, wallet, tool, cost, deliver, plugin.getLogger());
+        sendRepairOutcome(player, cost, result);
         return true;
+    }
+
+    /** Shared repair outcome wording: never claim "not charged" unless the refund was confirmed. */
+    private void sendRepairOutcome(Player player, long cost, GrowthPaidOps.Result result) {
+        switch (result.state()) {
+            case PAYMENT_DECLINED -> player.sendMessage(Text.mm(
+                    "<red>Repair costs <white><cost></white> WM; you cannot afford it.",
+                    "cost", String.valueOf(cost)));
+            case PAYMENT_FAILED -> player.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
+            case COMPLETED -> player.sendMessage(Text.mm(
+                    "<green>Repaired for <white><cost></white> WM.", "cost", String.valueOf(cost)));
+            case APPLIED_DELIVERY_FAILED -> player.sendMessage(Text.mm(
+                    "<gold>Repair applied (charged) but the item could not be handed over; rejoin to receive it."));
+            case REFUNDED -> player.sendMessage(Text.mm(
+                    "<red>Database error; you were not charged."));
+            case REFUND_FAILED -> player.sendMessage(Text.mm(
+                    "<red>Repair was charged but the refund FAILED. Keep this reference for an admin: <ref>",
+                    "ref", result.reference()));
+            case UNKNOWN -> player.sendMessage(Text.mm(
+                    "<gold>You were charged, but the result could not be verified. Rejoin to refresh the tool; "
+                            + "if it is unchanged, give an admin this reference: <ref>",
+                    "ref", result.reference()));
+        }
     }
 
     /**
@@ -177,48 +190,56 @@ public final class GrowthCommand implements CommandExecutor {
                 sender.sendMessage(Text.mm("<red>Economy unavailable; reissue cannot be processed."));
                 return true;
             }
-            Economy economy = plugin.economy();
-            if (!economy.has(player, cost)) {
-                sender.sendMessage(Text.mm("<red>Reissue costs <white><cost></white> WM; you cannot afford it.",
-                        "cost", String.valueOf(cost)));
-                return true;
-            }
-            EconomyResponse response = economy.withdrawPlayer(player, cost);
-            if (!response.transactionSuccess()) {
-                sender.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
-                return true;
-            }
-            // conditional epoch bump: 0 rows means a concurrent reissue already applied
-            int rows = plugin.repository().bumpEpoch(tool.toolId(), tool.epoch());
-            if (rows == 0) {
-                economy.depositPlayer(player, cost);
-                sender.sendMessage(Text.mm("<red>Tool changed in the meantime; you were not charged."));
-                return true;
-            }
-            GrowthTool fresh = plugin.repository().findByToolId(tool.toolId());
-            if (fresh == null) {
-                economy.depositPlayer(player, cost);
-                sender.sendMessage(Text.mm("<red>Tool missing; you were not charged. Contact an admin."));
-                return true;
-            }
-            try {
+            GrowthPaidOps.Wallet wallet = wallet(player);
+            final GrowthTool reissueTool = tool;
+            GrowthPaidOps.Delivery deliver = () -> {
+                GrowthTool fresh = plugin.repository().findByToolId(reissueTool.toolId());
+                if (fresh == null) throw new IllegalStateException("row vanished after the epoch bump");
                 plugin.cacheTool(player, fresh);
                 removeStaleCopies(player, fresh);
                 plugin.giveCurrentItem(player, fresh);
-            } catch (Exception e) {
-                // the DB state is already the new epoch; keep it recoverable, never brick
-                plugin.getLogger().warning("reissue delivery failed: " + e);
-                sender.sendMessage(Text.mm(
-                        "<gold>Reissue applied (charged) but delivery failed; rejoin to receive the item."));
-                return true;
-            }
-            sender.sendMessage(Text.mm(
-                    "<green>Reissued for <white><cost></white> WM (epoch <epoch>); progress, branch and upgrades kept.",
-                    "cost", String.valueOf(cost), "epoch", String.valueOf(fresh.epoch())));
-            return true;
+            };
+            GrowthPaidOps.Result result = GrowthPaidOps.reissue(
+                    store, wallet, reissueTool, cost, deliver, plugin.getLogger());
+            return sendReissueOutcome(player, cost, result);
         } finally {
             plugin.releaseReissueLock(player);
         }
+    }
+
+    /** Reissue wording derived from the paid-op classification; see GrowthPaidOps. */
+    private boolean sendReissueOutcome(Player player, long cost, GrowthPaidOps.Result result) {
+        switch (result.state()) {
+            case PAYMENT_DECLINED -> player.sendMessage(Text.mm(
+                    "<red>Reissue costs <white><cost></white> WM; you cannot afford it.",
+                    "cost", String.valueOf(cost)));
+            case PAYMENT_FAILED -> player.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
+            case COMPLETED -> {
+                GrowthTool fresh = plugin.toolOf(player.getUniqueId());
+                int epoch = fresh != null ? fresh.epoch() : -1;
+                player.sendMessage(Text.mm(
+                        "<green>Reissued for <white><cost></white> WM (epoch <epoch>); progress, branch and upgrades kept.",
+                        "cost", String.valueOf(cost), "epoch", String.valueOf(epoch)));
+            }
+            case APPLIED_DELIVERY_FAILED -> player.sendMessage(Text.mm(
+                    "<gold>Reissue applied (charged) but the item could not be handed over; "
+                            + "rejoin to receive it."));
+            case REFUNDED -> {
+                if (result.cause() == GrowthPaidOps.Cause.NO_MATCH) {
+                    player.sendMessage(Text.mm("<red>Tool changed in the meantime; you were not charged."));
+                } else {
+                    player.sendMessage(Text.mm("<red>Database error; you were not charged."));
+                }
+            }
+            case REFUND_FAILED -> player.sendMessage(Text.mm(
+                    "<red>Reissue was charged but the refund FAILED. Keep this reference for an admin: <ref>",
+                    "ref", result.reference()));
+            case UNKNOWN -> player.sendMessage(Text.mm(
+                    "<gold>You were charged, but the result could not be verified. Rejoin to refresh the tool; "
+                            + "if it is unchanged, give an admin this reference: <ref>",
+                    "ref", result.reference()));
+        }
+        return true;
     }
 
     private boolean branch(CommandSender sender, String[] args) {
@@ -276,6 +297,19 @@ public final class GrowthCommand implements CommandExecutor {
             sender.sendMessage(Text.mm("<red>Players only."));
             return true;
         }
+        // paid operations share one lock so a double click cannot double-charge/apply
+        if (!plugin.tryReissueLock(player)) {
+            sender.sendMessage(Text.mm("<red>Another paid operation is already in progress."));
+            return true;
+        }
+        try {
+            return upgradeNetheriteLocked(sender, player);
+        } finally {
+            plugin.releaseReissueLock(player);
+        }
+    }
+
+    private boolean upgradeNetheriteLocked(CommandSender sender, Player player) {
         GrowthTool tool = plugin.toolOf(player.getUniqueId());
         if (tool == null) tool = plugin.repository().findActive(player.getUniqueId()).orElse(null);
         if (tool == null) {
@@ -296,36 +330,57 @@ public final class GrowthCommand implements CommandExecutor {
             return true;
         }
         long cost = plugin.getConfig().getLong("netherite-upgrade-cost", 5000);
-        Economy economy = plugin.economy();
-        if (!economy.has(player, cost)) {
-            sender.sendMessage(Text.mm("<red>The upgrade costs <white><cost></white> WM; you cannot afford it.",
+        GrowthPaidOps.Wallet wallet = wallet(player);
+        final GrowthTool upgradeTool = tool;
+        GrowthPaidOps.Delivery deliver = () -> {
+            // always work from the authoritative row so the item matches the DB
+            GrowthTool updated = plugin.repository().findByToolId(upgradeTool.toolId());
+            if (updated == null) throw new IllegalStateException("row vanished after the upgrade");
+            if (!updated.netheriteUpgraded()) updated = updated.withNetheriteUpgraded(true);
+            plugin.cacheTool(player, updated);
+            ItemStack held = player.getInventory().getItemInMainHand();
+            GrowthTool.Identity id = GrowthItems.identify(plugin, held);
+            if (id != null && id.toolId().equals(upgradeTool.toolId().toString())
+                    && id.epoch() == upgradeTool.epoch()) {
+                player.getInventory().setItemInMainHand(
+                        Items.rebuildPreservingDamage(plugin, updated, held));
+            } else {
+                plugin.giveCurrentItem(player, updated);
+            }
+        };
+        GrowthPaidOps.Result result = GrowthPaidOps.upgradeNetherite(
+                store, wallet, upgradeTool, cost, deliver, plugin.getLogger());
+        switch (result.state()) {
+            case PAYMENT_DECLINED -> sender.sendMessage(Text.mm(
+                    "<red>The upgrade costs <white><cost></white> WM; you cannot afford it.",
                     "cost", String.valueOf(cost)));
-            return true;
+            case PAYMENT_FAILED -> sender.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
+            case COMPLETED -> sender.sendMessage(Text.mm(
+                    "<light_purple>Netherite Upgrade unlocked for <white><cost></white> WM!",
+                    "cost", String.valueOf(cost)));
+            case APPLIED_DELIVERY_FAILED -> sender.sendMessage(Text.mm(
+                    "<gold>Upgrade applied (charged) but the item could not be handed over; "
+                            + "rejoin to receive it."));
+            case REFUNDED -> {
+                if (result.cause() == GrowthPaidOps.Cause.NO_MATCH) {
+                    sender.sendMessage(Text.mm("<gray>Already unlocked; you were not charged."));
+                } else {
+                    sender.sendMessage(Text.mm("<red>Database error; you were not charged."));
+                }
+            }
+            case REFUND_FAILED -> sender.sendMessage(Text.mm(
+                    "<red>The upgrade was charged but the refund FAILED. Keep this reference for an admin: <ref>",
+                    "ref", result.reference()));
+            case UNKNOWN -> sender.sendMessage(Text.mm(
+                    "<gold>You were charged, but the result could not be verified. Rejoin to refresh the tool; "
+                            + "if it is unchanged, give an admin this reference: <ref>",
+                    "ref", result.reference()));
         }
-        EconomyResponse response = economy.withdrawPlayer(player, cost);
-        if (!response.transactionSuccess()) {
-            sender.sendMessage(Text.mm("<red>Payment failed; nothing was changed."));
-            return true;
-        }
-        int rows = plugin.repository().markNetheriteUpgraded(tool.toolId());
-        if (rows == 0) {
-            economy.depositPlayer(player, cost);
-            sender.sendMessage(Text.mm("<red>Already unlocked; you were not charged."));
-            return true;
-        }
-        GrowthTool updated = tool.withNetheriteUpgraded(true);
-        plugin.cacheTool(player, updated);
-        ItemStack held = player.getInventory().getItemInMainHand();
-        GrowthTool.Identity id = GrowthItems.identify(plugin, held);
-        if (id != null && id.toolId().equals(tool.toolId().toString()) && id.epoch() == tool.epoch()) {
-            player.getInventory().setItemInMainHand(
-                    Items.rebuildPreservingDamage(plugin, updated, held));
-        } else {
-            plugin.giveCurrentItem(player, updated);
-        }
-        sender.sendMessage(Text.mm("<light_purple>Netherite Upgrade unlocked for <white><cost></white> WM!",
-                "cost", String.valueOf(cost)));
         return true;
+    }
+
+    private GrowthPaidOps.Wallet wallet(Player player) {
+        return new VaultWallet(plugin.economy(), player);
     }
 
     private boolean admin(CommandSender sender, String[] args) {
