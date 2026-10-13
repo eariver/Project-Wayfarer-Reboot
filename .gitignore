@@ -15,3 +15,26 @@ out/
 .DS_Store
 Thumbs.db
 wayfarer-evidence/
+
+# accidentally-created runtime files (never track these)
+eula.txt
+server.properties
+banned-*.json
+whitelist.json
+usercache.json
+ops.json
+bukkit.yml
+spigot.yml
+paper-global.yml
+cache/
+logs/
+world/
+world_nether/
+world_the_end/
+crash-reports/
+libraries/
+versions/
+plugins/
+wayfarer-evidence/
+commands.in
+console.log
