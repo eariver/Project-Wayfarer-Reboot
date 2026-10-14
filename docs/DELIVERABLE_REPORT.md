@@ -191,6 +191,34 @@ Independent-review fixes on `work/playable-alpha` (90 unit tests, build green).
 Runtime: both servers restarted on the new jars with clean startup; economy and Growth tool data
 verified intact. Interactive flows (GUI, waystone, launchpad, gate) still need the Owner client.
 
+## 9. Independent review follow-up batch (2026-10-14)
+
+Four defects found in the previous commit and fixed, plus four edits from that batch that
+were missing in the pushed tree and are now re-applied:
+
+- **D1** `Db.tx()` leaked its transaction depth when the connection failed, so later
+  transactions on that thread never committed; the depth is now restored on every path and
+  covered by a connect-failure-then-success regression test.
+- **D2** `onQuit()` discarded the pending progress even when the final DB write failed;
+  the overlay is now kept and the values are logged for reconciliation.
+- **D3** the BROKEN transition persisted the last-checkpointed progress and overwrote the
+  buffer with it; it now uses the newest (buffered) value.
+- **D4** `cacheTool()` overwrote newer buffered progress from the join/reissue paths;
+  it now only adopts a not-older authoritative row (`ProgressBuffer.promote`).
+- **Re-applied**: R-06 (ACTIVE right-click GUI), R-08 (BROKEN block-break cancel),
+  R-11 (safe waystone arrival), R-14 (Main shop click-zone rule).
+
+**Runtime storage anomaly — root cause: environmental blocker.** A byte-verified database
+(restored with a matching md5) became empty after a server start/stop cycle; a 180 KB
+write+fsync read back as FileNotFoundError while 4 KB probes passed 40/40, and the
+repository directory returned ENOENT in the same window. No code path removes or resets
+the database. Contributing factor: restart commands that silently failed under the ENOENT
+episodes left overlapping server JVMs alive, which is what the H2 trace's
+`The file is locked` errors come from. Recovery snapshots and the procedure live in
+`runtime/backups/r-residual-batch/`.
+
+Unit tests: 111 passed / 0 failed.
+
 ## 6. Post-playtest repair batch (2026-10-13)
 
 Owner playtest feedback (P-1..P-19 in docs/PROGRESS.md) was fixed on `work/playable-alpha`.

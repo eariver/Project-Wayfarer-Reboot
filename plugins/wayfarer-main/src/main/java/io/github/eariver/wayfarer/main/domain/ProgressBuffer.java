@@ -67,6 +67,31 @@ public final class ProgressBuffer {
         dirty.remove(owner);
     }
 
+
+    /**
+     * R-03/D4: refresh the overlay from an authoritative row WITHOUT clobbering a newer
+     * buffered value. Used by cacheTool (join, reissue delivery, admin grant): the DB row
+     * can be older than the not-yet-checkpointed progress, and overwriting it here is how
+     * mining progress used to disappear.
+     *
+     * @param incoming the authoritative progress (DB row)
+     * @return the value the overlay holds afterwards
+     */
+    public synchronized long promote(UUID owner, long incoming) {
+        Long buffered = pending.get(owner);
+        if (buffered == null || incoming >= buffered) {
+            pending.put(owner, incoming);
+            return incoming;
+        }
+        return buffered;
+    }
+
+    /** Value that must be persisted by the quit/stop flush, or null when nothing is pending. */
+    public synchronized Long pendingForFlush(UUID owner, long persisted) {
+        Long buffered = pending.get(owner);
+        if (buffered == null || buffered == persisted) return null;
+        return buffered;
+    }
     /** Drop everything (called for a quitting player after the final flush). */
     public synchronized void clearAll() {
         pending.clear();

@@ -114,7 +114,20 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
-        flushAll();
+        try {
+            flushAll();
+        } catch (Exception e) {
+            // D2/R-03: a failed shutdown flush must be visible with the exact values
+            getLogger().log(Level.SEVERE, "progress flush failed on disable — values kept in the log",
+                    e);
+            for (Map.Entry<UUID, Long> e2 : progressBuffer.pendingOfAll().entrySet()) {
+                GrowthTool tool = toolCache.get(e2.getKey());
+                getLogger().severe("UNFLUSHED progress on disable owner=" + e2.getKey()
+                        + " pending=" + e2.getValue()
+                        + " cached=" + (tool == null ? "none" : tool.progress())
+                        + " tool=" + (tool == null ? "none" : tool.toolId()));
+            }
+        }
         if (repository != null) repository.close();
     }
 
@@ -290,7 +303,9 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
 
     public void cacheTool(Player player, GrowthTool tool) {
         toolCache.put(player.getUniqueId(), tool);
-        progressBuffer.setBaseline(player.getUniqueId(), tool.progress());
+        // D4/R-03: promote instead of setBaseline. An authoritative row that is older than
+        // the not-yet-checkpointed progress must NOT wipe it (join/reissue/admin paths).
+        progressBuffer.promote(player.getUniqueId(), tool.progress());
     }
 
     public boolean tryReissueLock(Player player) {
@@ -350,21 +365,32 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
-        GrowthTool tool = toolCache.get(player.getUniqueId());
-        Long pending = progressBuffer.pendingOf(player.getUniqueId());
+        UUID owner = player.getUniqueId();
+        GrowthTool tool = toolCache.get(owner);
+        Long pending = progressBuffer.pendingOf(owner);
         if (tool != null && pending != null && tool.progress() != pending) {
             GrowthTool updated = tool.withProgress(pending);
             try {
                 repository.update(updated);
-                toolCache.put(player.getUniqueId(), updated);
+                toolCache.put(owner, updated);
             } catch (Exception e) {
-                // keep the overlay: a reconnect applies the still-pending progress again
-                getLogger().log(Level.WARNING, "final progress flush failed for " + player.getUniqueId(), e);
+                // D2/R-03: the quit flush failed, so the not-yet-saved progress still only
+                // exists in memory. Keep the overlay and log the exact values; a reconnect
+                // on this server instance re-applies them (latestProgress reads the buffer),
+                // and a restart recovers whatever the checkpoint task managed to persist.
+                getLogger().log(Level.SEVERE,
+                        "progress NOT persisted on quit (owner=" + owner + " name=" + player.getName()
+                                + " pending=" + pending + " persisted=" + tool.progress()
+                                + " tool=" + tool.toolId() + " epoch=" + tool.epoch()
+                                + ") — the value is kept in memory; restore it from this log line if needed",
+                        e);
+                reissueLocks.remove(owner);
+                return; // keep the overlay: do NOT clear it
             }
         }
-        toolCache.remove(player.getUniqueId());
-        progressBuffer.clearOne(player.getUniqueId());
-        reissueLocks.remove(player.getUniqueId());
+        toolCache.remove(owner);
+        progressBuffer.clearOne(owner);
+        reissueLocks.remove(owner);
     }
 
     @EventHandler
@@ -374,16 +400,22 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         if (!progressWorlds.contains(player.getWorld().getName())) return;
         ItemStack held = player.getInventory().getItemInMainHand();
         GrowthTool.Identity id = GrowthItems.identify(this, held);
-        if (id == null) return;
+        if (id == null || !id.ownerUuid().equals(player.getUniqueId().toString())) return;
         GrowthTool tool = toolOf(player.getUniqueId());
-        if (tool == null || tool.status() != GrowthTool.Status.BROKEN) {
-            // P-16: a BROKEN tool is a gray-dye shell and must not break blocks at all.
-            if (tool != null && tool.status() == GrowthTool.Status.BROKEN) {
+        if (tool == null) return;
+        // R-08: one explicit rule — the BROKEN shell (a gray dye) never breaks blocks, and
+        // only the owner's current-epoch tool may register progress. The previous
+        // `if (tool == null || status != BROKEN) { if (status == BROKEN) cancel }` guard
+        // could never fire, so a broken pickaxe kept mining.
+        if (tool.status() == GrowthTool.Status.BROKEN
+                || tool.status() == GrowthTool.Status.REVOKED
+                || !tool.toolId().toString().equals(id.toolId())
+                || tool.epoch() != id.epoch()) {
+            if (tool.status() == GrowthTool.Status.BROKEN) {
                 event.setCancelled(true);
             }
+            return;
         }
-        if (event.isCancelled()) return;
-        if (tool == null || !tool.toolId().toString().equals(id.toolId()) || tool.epoch() != id.epoch()) return;
         if (!GrowthItems.isPickaxe(held)) return;
         registerBreak(player, held);
     }
@@ -395,13 +427,23 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
         ItemStack item = event.getItem();
         GrowthTool.Identity id = GrowthItems.identify(this, item);
         if (id == null || !id.ownerUuid().equals(event.getPlayer().getUniqueId().toString())) return;
-        GrowthTool tool = toolOf(event.getPlayer().getUniqueId());
-        if (tool == null || tool.status() != GrowthTool.Status.BROKEN) return;
-        // still allow the GUI so the repair route stays reachable
-        if (event.getAction().name().startsWith("RIGHT_CLICK")) {
-            event.setCancelled(true);
-            growthGui.open(event.getPlayer());
+        Player player = event.getPlayer();
+        // R-06: the item must be the player's CURRENT tool: a stale epoch or a copy of
+        // another player's tool may not open the GUI.
+        GrowthTool tool = toolOf(player.getUniqueId());
+        if (tool == null
+                || !tool.toolId().toString().equals(id.toolId())
+                || tool.epoch() != id.epoch()
+                || tool.status() == GrowthTool.Status.REVOKED) {
+            return;
         }
+        if (!event.getAction().name().startsWith("RIGHT_CLICK")) return;
+        // R-06: the GUI opens for ACTIVE (status) as well as BROKEN (repair route); the
+        // vanilla block interaction is only suppressed for the BROKEN shell.
+        if (tool.status() == GrowthTool.Status.BROKEN) {
+            event.setCancelled(true);
+        }
+        growthGui.open(player);
     }
 
     @EventHandler(ignoreCancelled = false)
@@ -433,17 +475,20 @@ public final class WayfarerMainPlugin extends JavaPlugin implements Listener {
             // clamp before destruction and record BROKEN; the physical item becomes the
             // gray-dye shell so it cannot keep mining (concept v0.0.5 §19)
             event.setCancelled(true);
-            GrowthTool broken = tool.withStatus(GrowthTool.Status.BROKEN);
+            // D3/R-03: transition with the NEWEST progress, never the last persisted row,
+            // otherwise the buffered breaks are lost when the tool breaks.
+            long latest = latestProgress(player.getUniqueId());
+            GrowthTool broken = tool.withProgress(latest).withStatus(GrowthTool.Status.BROKEN);
             repository.update(broken);
             toolCache.put(player.getUniqueId(), broken);
-            progressBuffer.setBaseline(player.getUniqueId(), broken.progress());
+            progressBuffer.setBaseline(player.getUniqueId(), latest);
             ItemStack shell = GrowthItems.buildBroken(this, broken);
             player.getInventory().setItemInMainHand(shell);
             player.playSound(player.getLocation(), org.bukkit.Sound.ENTITY_ITEM_BREAK, 1f, 1f);
             player.sendMessage(Text.mm(
                     "<red>Your Pickaxe of Growth is broken. <gold>Repair it with /wayfarer-main repair"));
         } else {
-            GrowthItems.applyDisplay(this, item, tool, tierFor(tool.progress()), projected);
+            GrowthItems.applyDisplay(this, item, tool, tierFor(latestProgress(player.getUniqueId())), projected);
         }
     }
 

@@ -403,10 +403,56 @@ public final class WaystoneManager {
             player.sendMessage(Text.mm("<red>You have not discovered that waystone."));
             return false;
         }
-        Location target = new Location(plugin.getServer().getWorld(waystone.world()),
-                waystone.x() + 0.5, waystone.y() + 1, waystone.z() + 0.5);
-        player.teleport(target);
-        return true;
+        // R-11: arrive NEXT TO the structure on solid ground, never inside the core block.
+        Location safe = safeArrival(waystone);
+        if (safe == null) {
+            player.sendMessage(Text.mm("<red>No safe arrival point at that waystone."));
+            return false;
+        }
+        return player.teleport(safe);
+    }
+
+    /**
+     * R-11: first solid ground with two clear blocks above it, searching outwards from the
+     * waystone and skipping the structure's own blocks (so the player can never land
+     * inside the core). A missing world fails the teleport instead of dropping the player
+     * into the void.
+     */
+    private Location safeArrival(Waystone waystone) {
+        var world = plugin.getServer().getWorld(waystone.world());
+        if (world == null) return null;
+        int[][] offsets = {
+                {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+                {1, 1}, {-1, 1}, {1, -1}, {-1, -1},
+                {WaystoneGeometry.FOOTPRINT, 0}, {-WaystoneGeometry.FOOTPRINT, 0},
+                {0, WaystoneGeometry.FOOTPRINT}, {0, -WaystoneGeometry.FOOTPRINT},
+                {WaystoneGeometry.FOOTPRINT, WaystoneGeometry.FOOTPRINT},
+                {-WaystoneGeometry.FOOTPRINT, WaystoneGeometry.FOOTPRINT},
+                {WaystoneGeometry.FOOTPRINT, -WaystoneGeometry.FOOTPRINT},
+                {-WaystoneGeometry.FOOTPRINT, -WaystoneGeometry.FOOTPRINT},
+        };
+        for (int[] offset : offsets) {
+            Location candidate = safeGround(world, waystone.x() + offset[0], waystone.z() + offset[1],
+                    waystone.y());
+            if (candidate != null) return candidate;
+        }
+        return null;
+    }
+
+    private Location safeGround(org.bukkit.World world, int x, int z, int hintY) {
+        int max = world.getMaxHeight() - 4;
+        int min = world.getMinHeight() + 1;
+        int start = Math.min(Math.max(hintY, min), max);
+        for (int y = start; y <= max; y++) {
+            Block ground = world.getBlockAt(x, y, z);
+            if (!ground.getType().isSolid()) continue;
+            if (ground.getType() == coreMaterial) continue; // never land on the core column
+            if (world.getBlockAt(x, y + 1, z).getType().isAir()
+                    && world.getBlockAt(x, y + 2, z).getType().isAir()) {
+                return new Location(world, x + 0.5, y + 1.0, z + 0.5);
+            }
+        }
+        return null;
     }
 
     public Waystone byId(long id) {

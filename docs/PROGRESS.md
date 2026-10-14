@@ -296,6 +296,107 @@ Unit tests: **90 passed / 0 failed** (`./gradlew build` BUILD SUCCESSFUL).
 - **EXTERNAL BLOCKER**: the storage under `/home/eariver/wayfarer-dev/runtime` intermittently returned ENOENT; H2 recreated `growth.db.mv.db` from scratch twice while the server was running. No player progress was lost from the code changes and the rows above are intact, but the PoC runtime should be moved to stable storage. Verified snapshots + the recovery procedure are in `runtime/backups/r-residual-batch/`.
 - Exactly-once across the economy/DB boundary is still not possible; UNKNOWN states carry reconcile references.
 
+## Independent review follow-up batch (2026-10-14, HEAD fd588ff)
+
+Follow-up on the R-01..R-15 batch. The review reported remaining defects and a runtime
+storage anomaly; both were investigated and fixed/reported. Unit tests: **111 passed /
+0 failed** (`./gradlew build` BUILD SUCCESSFUL).
+
+### A. Defects confirmed in the pushed commit and fixed
+
+| ID | Sev | Status | Root cause | Fix | Tests |
+|---|---|---|---|---|---|
+| D1 | Critical | FIXED | `Db.tx()` incremented the ThreadLocal transaction depth BEFORE `connection()`; a failed connection therefore left the depth permanently raised, so every later transaction on that thread was treated as NESTED and its `commit()` was silently skipped — writes appeared to succeed but never committed | the depth is now captured before the connection attempt and restored from that captured value on every exit path (nested, failure, connect failure) | `DbTransactionTest.connectionFailureKeepsDepthUsable` + `nestedFailureAfterConnectFailureRestoresDepth`: after a failed connect the SAME thread runs a real transaction and the row is really committed |
+| D2 | High | FIXED | `onQuit()` logged "keep the overlay" but then called `progressBuffer.clearOne()` unconditionally, so a failed final DB write discarded the not-yet-saved progress forever | the quit flush keeps the overlay on failure, refuses to clear it, and logs SEVERE with owner/name/pending/persisted/tool/epoch; `onDisable` dumps every unflushed pending value | `ProgressBufferTest.pendingForFlush` (quit decision) |
+| D3 | High | FIXED | the BROKEN transition used `toolOf()` (the last-checkpointed row): it persisted the stale progress and then re-set the buffer baseline to that stale value, losing every buffered break | the transition now uses `latestProgress()` and persists/keeps the newest value; the display branch does the same | `ToolInteractionRulesTest.brokenTransitionKeepsPendingProgress` + `repairKeepsProgress` |
+| D4 | High | FIXED | `cacheTool()` unconditionally called `setBaseline()`, so the async join and the reissue delivery (both read the DB row) overwrote newer buffered progress | `ProgressBuffer.promote()` only adopts an authoritative row that is not older than the buffered value; `cacheTool` uses it | `ProgressBufferTest` D4 block (older row keeps buffer, newer row becomes baseline, reissue-style flow) |
+
+### B. Fixes from the R-batch that were missing in the pushed commit (re-applied)
+
+The previous commit lost four edits when a corrupted file was restored from HEAD mid-batch.
+All four are re-applied now and verified present:
+
+- **R-06** `onInteract`: ACTIVE tools open the status GUI on right-click again (owner/tool-id/epoch/revoked validated; the vanilla block interaction is only suppressed for BROKEN shells).
+- **R-08** `onBreak`: the unreachable `if (tool == null || status != BROKEN) { if (status == BROKEN) cancel }` branch is replaced by one explicit rule — BROKEN/REVOKED/foreign/stale never mine, and BROKEN cancels the event.
+- **R-11** `WaystoneManager.teleportTo`: arrives on solid ground beside the structure (searching outward, skipping the core column, two clear blocks above) instead of inside the core block; a missing world fails the teleport; the teleport result is returned.
+- **R-14** the Main shop's `onClick` now uses the shared `GuiClicks.countsAsButtonClick` rule, resolves sell/buy from the slot's real icon, and cancels drags — so a matching material in the player's own inventory cannot trigger a trade.
+
+All five GUIs (Growth, Main Shop, Frontier Nav, Waystone, Frontier Shop) now share the same
+click-zone rule and cancel drags — verified by a per-file grep.
+
+### C. Runtime storage anomaly — root cause (EXTERNAL BLOCKER)
+
+The review asked for a read-only investigation of the `runtime` ENOENT / H2 recreation.
+
+**Evidence gathered (read-only):**
+- The H2 trace file records only one kind of database error: `MVStoreException: The file
+  is locked` ×10 — i.e. a second process opening a database another process already holds.
+- A controlled probe in the runtime directory: a 180 000-byte file written with
+  `write + flush + fsync` and read back immediately returned `FileNotFoundError` (repeatedly),
+  while a 4 KB probe file read back correctly 40/40 times. The repository directory itself
+  returned ENOENT during the same window.
+- A database restored byte-identical (md5-verified, 188 416 bytes, 5 rows) became an empty
+  12–45 KB file after a server start/stop cycle over it — i.e. the written data never
+  reached stable storage even though the read-back immediately after the write succeeded.
+- `df`/`/proc/mounts`: ext4 on `/dev/sda2` (19% used, 2% inodes), no FUSE/NFS/overlay in the
+  path; `/tmp` is tmpfs and behaved correctly throughout.
+
+**Conclusion:** the platform's storage under `/home/eariver` intermittently loses written
+data and returns ENOENT. This is an **environmental blocker**, not a defect of the plugin
+code: no code path in this batch deletes or resets the growth database, and the restore
+itself was verified byte-for-byte before the server was started.
+
+**Contributing factor (operational):** during the earlier sessions the restart procedure
+(`printf 'stop' > console.fifo`) silently failed under the ENOENT episodes, so new server
+JVMs were started while previous ones were still alive — that is what produced the
+`file is locked` contention. Restarts must now confirm the previous PID has exited before
+starting a replacement.
+
+**Data status:** no player progress was lost by any code change. The authoritative rows
+are preserved in the verified snapshot
+`runtime/backups/r-residual-batch/growth.db.recovered.mv.db`
+(`kanpyo_himono progress=1219 ACTIVE`, `wf_admin epoch=2 progress=1200 SILK_TOUCH ACTIVE`,
+the revoked history row, both test accounts) and the recovery procedure is documented in
+that directory's README.
+
+**Recommendation:** move the isolated PoC runtime (and the repository working copy) to
+storage that survives power loss (verified tmpfs or a local disk with barrier support),
+or run the runtime inside a container volume with fsync guarantees. Until then, stop the
+servers by PID and verify the exit before every restart, and re-verify the database rows
+after each restart.
+
+### D. Runtime verification performed
+
+- main restarted on the new jars: single process confirmed before and after the start,
+  `Wayfarer_Main ready`, mcMMO 2.3.003-SNAPSHOT, `/shop` delegated to EconomyShopGUI,
+  0 mcMMO API exceptions, 0 file-lock errors, 0 stack traces from `io.github.eariver`.
+- The protocol bot joined main three times during the verification window and the async
+  join + `cacheTool` path (D4) ran without a single `first-tool lookup failed` /
+  `progress checkpoint failed` / `not persisted on quit` entry.
+- `WaymarkProvider` and `Wayfarer_Main` load lists verified in the startup output.
+- Unit/integration: 111 passed, 0 failed, including the new fault-injection and
+  wiring-rule suites described above.
+
+### E. NOT VERIFIED (documented, left for the Owner client)
+
+- GUI open/click behaviour in-game (R-06, R-14) — the protocol bot cannot deliver
+  use-item-on or inventory-click packets through ViaVersion to 1.21.11, and its chat
+  commands stopped being honoured after the resource-pack gate during this window.
+- Waystone teleport landing / no suffocation (R-11), structure protection and cleanup
+  in-game (R-12), launchpad elytra (R-13), the frontier shop (R-15) and the gate
+  permission (R-05): all require real client interaction.
+- Live mining accumulation with the final jar: verified earlier in this session
+  (0/100 → 3/100 → 4/100 across consecutive digs, which the old code would have capped
+  at +1 per checkpoint batch); the re-verification attempt was blocked by the resource-pack
+  gate described above.
+
+### F. Residual risks
+
+- The storage instability (C) can still destroy a database while a server is running; the
+  backup + recovery procedure in `runtime/backups/r-residual-batch/` is the mitigation.
+- Exactly-once across the economy/DB boundary remains impossible; UNKNOWN states carry
+  reconcile references by design.
+
 ## Owner playtest follow-up (2026-10-13, Main)
 
 Pass: Growth GUI opens via pickaxe right-click; partial repair charged OK (before P-10).

@@ -1,6 +1,7 @@
 package io.github.eariver.wayfarer.main.domain;
 
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
@@ -92,5 +93,70 @@ class ProgressBufferTest {
         assertEquals(0, buffer.pendingCount());
         assertFalse(buffer.isDirty(player));
         assertEquals(baseline, buffer.latest(player, baseline));
+    }
+    @Nested
+    @DisplayName("D4: a cache refresh must not clobber a newer buffered progress")
+    class Promote {
+
+        private final UUID player = UUID.randomUUID();
+
+        @Test
+        @DisplayName("an older DB row keeps the buffered progress")
+        void olderRowKeepsBuffer() {
+            buffer.addBreak(player, 10L);       // 11 pending
+            buffer.addBreak(player, 10L);       // 12 pending
+            long after = buffer.promote(player, 10L);   // join/server row is stale
+            assertEquals(12L, after, "the buffered progress survives the refresh");
+            assertEquals(12L, buffer.latest(player, 10L));
+        }
+
+        @Test
+        @DisplayName("a newer DB row becomes the new baseline")
+        void newerRowBecomesBaseline() {
+            buffer.addBreak(player, 10L);       // 11 pending
+            long after = buffer.promote(player, 11L);   // checkpointed elsewhere
+            assertEquals(11L, after);
+            assertEquals(11L, buffer.latest(player, 11L));
+        }
+
+        @Test
+        @DisplayName("an empty overlay simply adopts the row")
+        void emptyOverlayAdoptsRow() {
+            assertEquals(7L, buffer.promote(player, 7L));
+        }
+
+        @Test
+        @DisplayName("reissue-style flow: epoch bump then a stale row must not lose progress")
+        void reissueFlowKeepsProgress() {
+            long baseline = 100L;
+            for (int i = 0; i < 5; i++) buffer.addBreak(player, baseline);   // 105 pending
+            // reissue bumps the epoch and reads the row back (still 100 in the DB)
+            buffer.promote(player, baseline);
+            assertEquals(105L, buffer.latest(player, baseline));
+            // the next break still counts on the newest value
+            assertEquals(106L, buffer.addBreak(player, baseline));
+        }
+    }
+
+    @Nested
+    @DisplayName("D2: the quit/stop flush decides from the pending value")
+    class QuitFlush {
+
+        private final UUID player = UUID.randomUUID();
+
+        @Test
+        @DisplayName("nothing pending means nothing to flush")
+        void nothingToFlush() {
+            assertNull(buffer.pendingForFlush(player, 42L));
+            buffer.setBaseline(player, 42L);
+            assertNull(buffer.pendingForFlush(player, 42L));
+        }
+
+        @Test
+        @DisplayName("a pending value surfaces for the quit flush")
+        void pendingValueSurfaces() {
+            buffer.addBreak(player, 42L);
+            assertEquals(43L, buffer.pendingForFlush(player, 42L));
+        }
     }
 }

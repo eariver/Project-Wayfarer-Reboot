@@ -117,4 +117,62 @@ class DbTransactionTest {
             return rs.getInt(1);
         }
     }
+    @Test
+    @DisplayName("a connection failure leaves the transaction depth intact for the same thread")
+    void connectionFailureKeepsDepthUsable() throws Exception {
+        // a FILE in place of the parent directory makes opening the database fail
+        File notADir = new File(tempDir, "not-a-dir-depth");
+        assertTrue(notADir.createNewFile() || notADir.isFile());
+        Db failing = new Db(new File(notADir, "db.mv.db"), false);
+        assertThrows(RuntimeException.class, () -> failing.tx(c -> null));
+        assertFalse(failing.inTransaction(), "the depth must be restored after a failed connect");
+
+        // the SAME thread must still be able to run a real transaction afterwards
+        Db healthy = freshDb("afterfailure");
+        healthy.exec("CREATE TABLE t (id INT PRIMARY KEY, v INT NOT NULL)");
+        int inserted = healthy.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (1, 7)")) {
+                return ps.executeUpdate();
+            }
+        });
+        assertEquals(1, inserted);
+        assertEquals(1, rowCount(healthy), "the post-failure transaction must really COMMIT");
+
+        // and a nested call inside it must still be treated as nested (no early commit)
+        RuntimeException nestedBoom = assertThrows(RuntimeException.class, () -> healthy.tx(outer -> {
+            try (PreparedStatement ps = outer.prepareStatement("INSERT INTO t VALUES (2, 8)")) {
+                ps.executeUpdate();
+            }
+            healthy.tx(inner -> {
+                throw new IllegalStateException("inner boom");
+            });
+            return null;
+        }));
+        assertNotNull(nestedBoom);
+        assertEquals(1, rowCount(healthy), "the nested failure rolled the whole outer tx back");
+        assertFalse(healthy.inTransaction());
+    }
+
+    @Test
+    @DisplayName("a connection failure inside a nested frame still restores the depth")
+    void nestedFailureAfterConnectFailureRestoresDepth() throws Exception {
+        Db db = freshDb("depthrecover");
+        db.exec("CREATE TABLE t (id INT PRIMARY KEY, v INT NOT NULL)");
+        // outer frame fails, then the same thread runs a clean transaction
+        assertThrows(RuntimeException.class, () -> db.tx(outer -> {
+            try (PreparedStatement ps = outer.prepareStatement("INSERT INTO t VALUES (1, 1)")) {
+                ps.executeUpdate();
+            }
+            throw new IllegalStateException("outer boom");
+        }));
+        assertFalse(db.inTransaction());
+        assertEquals(0, rowCount(db));
+        int inserted = db.tx(c -> {
+            try (PreparedStatement ps = c.prepareStatement("INSERT INTO t VALUES (9, 9)")) {
+                return ps.executeUpdate();
+            }
+        });
+        assertEquals(1, inserted);
+        assertEquals(1, rowCount(db));
+    }
 }

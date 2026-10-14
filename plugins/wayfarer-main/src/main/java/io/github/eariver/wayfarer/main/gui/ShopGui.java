@@ -84,26 +84,61 @@ public final class ShopGui implements Listener {
         return item;
     }
 
+    /**
+     * R-14: only clicks on our own top inventory count, and the action is resolved from
+     * the slot's real button. Without this a diamond in the player's own inventory would
+     * be sold just because the shop also offers diamonds.
+     */
     @EventHandler
     public void onClick(InventoryClickEvent event) {
         if (!(event.getInventory().getHolder() instanceof ShopHolder)) return;
+        boolean clickedTop = event.getClickedInventory() != null
+                && event.getClickedInventory().equals(event.getView().getTopInventory());
+        if (!GuiClicks.countsAsButtonClick(clickedTop, event.getRawSlot(),
+                event.getView().getTopInventory().getSize())) {
+            event.setCancelled(true);
+            return;
+        }
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (event.getClick() != ClickType.LEFT && event.getClick() != ClickType.RIGHT) return;
         ItemStack clicked = event.getCurrentItem();
         if (clicked == null || !clicked.hasItemMeta()) return;
         Material material = clicked.getType();
-        boolean isSell = SELL.containsKey(material);
-        if (!isSell && !BUY.containsKey(material)) return;
+        Long sellPrice = sellPriceAt(event.getRawSlot(), material);
+        Long buyPrice = buyPriceAt(event.getRawSlot(), material);
         Economy economy = plugin.economy();
         if (economy == null) {
             player.sendMessage(Text.mm("<red>Economy unavailable."));
             return;
         }
-        if (isSell) {
-            sell(player, economy, material, SELL.get(material));
-        } else {
-            buy(player, economy, material, BUY.get(material));
+        if (sellPrice != null) {
+            sell(player, economy, material, sellPrice);
+        } else if (buyPrice != null) {
+            buy(player, economy, material, buyPrice);
         }
+    }
+
+    /** Price of the sell icon that really sits in this slot (not merely that material). */
+    private Long sellPriceAt(int slot, Material material) {
+        ItemStack icon = slot >= 0 && slot < SELL_ORDER.size() ? new ItemStack(SELL_ORDER.get(slot)) : null;
+        return icon != null && icon.getType() == material ? SELL.get(material) : null;
+    }
+
+    private Long buyPriceAt(int slot, Material material) {
+        int index = slot - 9;
+        if (index < 0 || index >= BUY_ORDER.size()) return null;
+        ItemStack icon = new ItemStack(BUY_ORDER.get(index));
+        return icon.getType() == material ? BUY.get(material) : null;
+    }
+
+    /** Drags across the shop must never move items in or out. */
+    @EventHandler
+    public void onDrag(InventoryDragEvent event) {
+        if (!(event.getInventory().getHolder() instanceof ShopHolder)) return;
+        boolean touchesTop = event.getRawSlots().stream()
+                .anyMatch(s -> s < event.getView().getTopInventory().getSize());
+        if (touchesTop) event.setCancelled(true);
     }
 
     private void sell(Player player, Economy economy, Material material, long price) {

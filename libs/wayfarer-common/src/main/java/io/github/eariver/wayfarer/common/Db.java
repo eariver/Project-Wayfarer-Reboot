@@ -77,13 +77,19 @@ public final class Db {
      * Run a unit of work inside a transaction. Re-entrant on the same thread: a nested
      * call joins the enclosing transaction and lets the outermost frame commit or roll
      * back, so no intermediate commit can leak partial work.
+     *
+     * <p>The transaction depth is captured BEFORE the connection is opened and restored
+     * from that captured value in every exit path, so a failed connection attempt can
+     * never leave the thread believing it is still inside a transaction (which would
+     * silently stop all later transactions from committing).
      */
     public <T> T tx(SqlFunction<T> body) {
         lock.lock();
-        boolean outermost = depth.get() == 0;
+        final int outerDepth = depth.get();
         try {
-            depth.set(depth.get() + 1);
-            Connection c = connection(); // inside try: the lock is released on failure
+            Connection c = connection(); // may throw: depth is still untouched here
+            final boolean outermost = outerDepth == 0;
+            depth.set(outerDepth + 1);
             boolean prev = c.getAutoCommit();
             if (outermost) c.setAutoCommit(false);
             try {
@@ -105,8 +111,9 @@ public final class Db {
                     } catch (SQLException ignored) {
                     }
                 }
-                depth.set(depth.get() - 1);
-                if (depth.get() == 0) depth.remove();
+                // restore the captured depth: correct for nested and for repeated calls
+                depth.set(outerDepth);
+                if (outerDepth == 0) depth.remove();
             }
         } catch (SQLException e) {
             throw new IllegalStateException(e);
