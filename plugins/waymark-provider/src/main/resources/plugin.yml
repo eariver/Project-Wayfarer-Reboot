@@ -1,0 +1,19 @@
+name: WaymarkProvider
+version: ${version}
+main: io.github.eariver.wayfarer.waymark.WaymarkProviderPlugin
+api-version: '1.21'
+description: Shared Waymark (WM) economy provider backed by a shared SQLite ledger.
+author: Project Wayfarer Reboot
+softdepend: [Vault]
+commands:
+  waymark:
+    description: Waymark balance, payment, and administration.
+    usage: /waymark [balance|pay|give|take|set|reload]
+    aliases: [wm, wmark]
+permissions:
+  waymark.use:
+    description: Use basic Waymark commands.
+    default: true
+  waymark.admin:
+    description: Administer Waymark balances.
+    default: op

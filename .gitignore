@@ -1,0 +1,45 @@
+# Java / Gradle
+.gradle/
+build/
+out/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# plugin source module build outputs only — the sources themselves stay trackable
+plugins/build/
+plugins/*/build/
+plugins/*/libs/
+plugins/*/src/main/kotlin/
+tools/*/build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# accidentally-created runtime files (never track these)
+eula.txt
+server.properties
+banned-*.json
+whitelist.json
+usercache.json
+ops.json
+bukkit.yml
+spigot.yml
+paper-global.yml
+cache/
+logs/
+world/
+world_nether/
+world_the_end/
+crash-reports/
+libraries/
+versions/
+commands.in
+console.log
+wayfarer-evidence/

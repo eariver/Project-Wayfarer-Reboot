@@ -1,0 +1,19 @@
+name: Wayfarer_Frontier
+version: ${version}
+main: io.github.eariver.wayfarer.frontier.WayfarerFrontierPlugin
+api-version: '1.21'
+description: Worlds Beyond / Ruined Frontier traversal, launchpads and the waystone network.
+author: Project Wayfarer Reboot
+softdepend: [Vault, WaymarkProvider, LeafGrapple, Multiverse-Core]
+commands:
+  wayfarer-frontier:
+    description: Frontier navigation, shop, waystones and admin.
+    usage: /wayfarer-frontier [open|shop|waystones|revive|maintain|overwrite|grant|debug-state|buildgates]
+    aliases: [wff]
+permissions:
+  wayfarer.frontier.use:
+    description: Use Frontier features.
+    default: true
+  wayfarer.frontier.admin:
+    description: Administer Frontier state.
+    default: op

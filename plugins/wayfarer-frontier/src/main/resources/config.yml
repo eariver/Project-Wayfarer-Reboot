@@ -1,0 +1,47 @@
+themes:
+  worlds-beyond:
+    - frontier_iris
+  ruined-frontier:
+    - frontier_bs
+    - frontier_bs_nether
+    - frontier_bs_the_end
+  gate-world: world
+
+arrivals:
+  gate:
+    world: world
+    x: 0.5
+    y: 64.0
+    z: 0.5
+  worlds-beyond:
+    world: frontier_iris
+    x: 0.5
+    y: 67.0
+    z: 0.5
+  ruined-frontier:
+    world: frontier_bs
+    x: 0.5
+    y: 80.0
+    z: 0.5
+
+launchpad:
+  material: LIGHT_WEIGHTED_PRESSURE_PLATE
+  max-uses: 3
+  expire-days: 30
+  horizontal-velocity: 2.5
+  vertical-velocity: 1.2
+  auto-deploy-elytra: true
+
+waystone:
+  core-material: LODESTONE
+  palette:
+    - STONE_BRICKS
+    - MOSSY_STONE_BRICKS
+  protected-days: 14
+  contestable-days: 14
+  dormant-days: 180
+  min-horizontal-distance: 1000
+  placement-price: 600
+  maintain-price: 200
+  overwrite-price: 300
+  revive-price: 150
